@@ -1,8 +1,8 @@
 // ==========================================
 // MYSQL MANAGEMENT
 // ==========================================
-//use crate::{registrar_log_error, leer_linea, limpiar_pantalla, LOG_ERRORES, OK, WARNING, ERROR};
-use crate::{OK, WARNING, ERROR_YOU, ERROR_PC, registrar_log_error, Evaluable, evaluate};
+use crate::evaluate;
+use crate::public::{error_log, clear_screen, print_header, read_in, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 use mysql::{Conn, Opts};
@@ -14,7 +14,7 @@ pub fn ajustar_politicas_password() {
     let status_comp = Command::new("mysql")
         .args(["-u", "root", "-e", "INSTALL COMPONENT 'file://component_validate_password';"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     evaluate!(status_comp, true);
 
@@ -23,7 +23,7 @@ pub fn ajustar_politicas_password() {
     let status_plugin = Command::new("mysql")
         .args(["-u", "root", "-e", "INSTALL PLUGIN validate_password SONAME 'validate_password.so';"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     evaluate!(status_plugin, true);
 
@@ -33,7 +33,7 @@ pub fn ajustar_politicas_password() {
     let status_opt1 = Command::new("mysql")
         .args(["-u", "root", "-e", query_componente])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     if evaluate!(status_opt1, true) {
@@ -47,7 +47,7 @@ pub fn ajustar_politicas_password() {
     let status_opt2 = Command::new("mysql")
         .args(["-u", "root", "-e", query_plugin])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     if evaluate!(status_opt2, true) {
@@ -80,7 +80,7 @@ pub fn configurar_mysql_seguro() {
     let status_start = Command::new("systemctl")
         .args(["start", "mysql"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status_start, true) { return; }
 
@@ -89,7 +89,7 @@ pub fn configurar_mysql_seguro() {
     let status_sed = Command::new("sed")
         .args(["-i", "s/bind-address.*/bind-address = 0.0.0.0/", "/etc/mysql/mysql.conf.d/mysqld.cnf"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status_sed, true) { return; }
 
@@ -102,7 +102,7 @@ pub fn configurar_mysql_seguro() {
     let status_alter = Command::new("mysql")
         .args(["-u", "root", "-e", &query_pass])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status_alter, true) { return; }
 
@@ -148,7 +148,7 @@ let mut conn = match mysql::Conn::new(opts) {
     let status_restart = Command::new("systemctl")
         .args(["restart", "mysql"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status_restart, true) { return; }
 
@@ -156,7 +156,7 @@ let mut conn = match mysql::Conn::new(opts) {
     let status_ufw = Command::new("ufw")
         .args(["allow", "3306/tcp"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status_ufw, true) { return; }
 

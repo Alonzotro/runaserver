@@ -59,7 +59,7 @@ ERROR_EXECUTING: "Error executing the command"
 
 #Services --> select_language
 SELECT_LANGUAGE: "Select your language"
-LANGUAGE_SELECTED: "Language set to Spanish"
+LANGUAGE_SELECTED: "Language set to English"
 BAD_SELECTED: "Invalid option"
 
 #Services --> update_server
@@ -77,9 +77,10 @@ SERVER_SUCCESS: "Server updated successfully."
 CHANGE_PASSWD: "Change of root user password"
 
 #Services --> Install necessary packages
-INSTALL_NECESSARY: "Installing necessary packages..."
-ERROR_INSTALL_NECESSARY: "Failed to install necessary packages."
-ADD_REPOSITORY: "Adding repositories..."
+INSTALL_NECESSARY: "Installing required packages..."
+ERROR_INSTALL_NECESSARY: "Error installing required packages."
+ADD_REPOSITORY_PHP: "Adding PHP repositories..."
+ADD_REPOSITORY_APACHE: "Adding Apache repositories..."
 ERROR_ADD_REPOSITORY_PHP: "Error adding PHP repositories."
 ERROR_ADD_REPOSITORY_APACHE: "Error adding Apache repositories."
 INSTALL_ESSENTIAL: "Installing essential packages"

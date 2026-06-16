@@ -1,15 +1,14 @@
 // ==========================================
 // APACHE MANAGEMENT
 // ==========================================
-//Hola, smn
-//mod php;
-use crate::{registrar_log_error, leer_linea, limpiar_pantalla, Evaluable, evaluate, OK, WARNING, ERROR_YOU, ERROR_PC};
+use crate::evaluate;
+use crate::public::{error_log, clear_screen, print_header, read_in, command, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
+
 use crate::php::{versiones_instaladas_php};
-use std::fs::{File, OpenOptions};
-use std::fs;
-use std::io::{self, Write, BufRead, BufReader};
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write, BufRead, BufReader, ErrorKind};
 use std::error::Error;
-use std::io::ErrorKind;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
@@ -20,6 +19,8 @@ pub fn version_apache() -> io::Result<()> {
     
     // 1. Usamos la macro POR DENTRO para ejecutar y validar el comando de forma segura.
     // Usamos 'false' para que no imprima errores feos de sistema si Apache no existe.
+    
+    
     let Some(output) = evaluate!(Command::new("apache2").arg("-v").output(), false) else {
         // Si el comando ni siquiera existe, devolvemos un error NotFound compatible con la macro
         return Err(io::Error::new(io::ErrorKind::NotFound, rust_i18n::t!("APACHE_NOT_FOUND")));
@@ -44,31 +45,27 @@ pub fn version_apache() -> io::Result<()> {
 
 pub fn config_apache() {
     println!("{}", rust_i18n::t!("CONFIGURING_APACHE"));
+
     // 1. Configurar el Firewall
     println!("{}", rust_i18n::t!("CONFIGURING_FIREWALL"));
-    if !evaluate!(Command::new("ufw").args(&["allow", "Apache Full"]).stdout(Stdio::null()).stderr(registrar_log_error()).status(), true) {
-        return;
-    }
+    command("ufw", &["allow", "Apache Full"], true);
+
     // 2. Reiniciar Apache
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
-    if !evaluate!(Command::new("systemctl").args(&["restart", "apache2"]).stdout(Stdio::null()).stderr(registrar_log_error()).status(), true) {
-        return;
-    }
+    command("systemctl", &["restart", "apache2"], true);
+
     // 3. Deshabilitar MPM Prefork
     println!("{}", rust_i18n::t!("DISABLING_MPM"));
-    if !evaluate!(Command::new("a2dismod").arg("mpm_prefork").stdout(Stdio::null()).stderr(registrar_log_error()).status(), true) {
-        return;
-    }
+    command("a2dismod", &["mpm_prefork"], true);
+
     // 4. Habilitar MPM Event y módulos FCGI
     println!("{}", rust_i18n::t!("ENABLING_FPM"));
-    if !evaluate!(Command::new("a2enmod").args(&["mpm_event", "proxy_fcgi", "setenvif"]).stdout(Stdio::null()).stderr(registrar_log_error()).status(), true) {
-        return;
-    }
+    command("a2enmod", &["mpm_event", "proxy_fcgi", "setenvif"], true);
+
     // 5. Habilitar módulos adicionales
     println!("{}", rust_i18n::t!("ENABLING_ADDITIONAL_MODULES"));
-    if !evaluate!(Command::new("a2enmod").args(&["actions", "fcgid", "alias", "proxy_fcgi"]).stdout(Stdio::null()).stderr(registrar_log_error()).status(), true) {
-        return;
-    }
+    command("a2enmod", &["actions", "fcgid", "alias", "proxy_fcgi"], true);
+
     // ¡Éxito total!
     println!("{} {}", OK, rust_i18n::t!("CONFIGURED_SUCCESS"));
 }
@@ -78,15 +75,14 @@ pub fn reiniciar_apache() {
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
 
     // 2. Evaluamos el comando directamente con la macro
-    if !evaluate!(Command::new("systemctl").args(&["restart", "apache2"]).status(), true) {
-        // Si la macro detecta un fallo, añadimos el tip de ayuda internacionalizado
+    if !command("systemctl", &["restart", "apache2"], true) {
         println!("[X] {}", rust_i18n::t!("APACHE_RESTART_ERROR_TIP"));
     }
 }
 
 pub fn add_site_apache(ip: &str) {
     // 1. Solicitar y validar el nombre del sitio
-    let sitio_raw = leer_linea(&rust_i18n::t!("PROMPT_SITE_NAME"));
+    let sitio_raw = read_in(&rust_i18n::t!("PROMPT_SITE_NAME"));
     let sitio = sitio_raw.trim();
 
     if sitio.is_empty() || !sitio.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
@@ -130,7 +126,7 @@ pub fn add_site_apache(ip: &str) {
     }
     println!("=========================================");
     
-    let sel_ver = leer_linea(&rust_i18n::t!("PROMPT_PHP_VERSION"));
+    let sel_ver = read_in(&rust_i18n::t!("PROMPT_PHP_VERSION"));
     let idx: usize = sel_ver.trim().parse().unwrap_or(0);
 
     if idx < 1 || idx > versiones.len() {
@@ -253,7 +249,7 @@ pub fn disable_php_apache() {
         return;
     }
 
-    limpiar_pantalla();
+    clear_screen();
 
     // 2. Mostrar menú de configuraciones activas
     println!("=========================================");
@@ -266,7 +262,7 @@ pub fn disable_php_apache() {
 
     // 3. Lectura de la selección
     let prompt = rust_i18n::t!("PROMPT_DISABLE_FPM", max = versiones_activas.len());
-    let seleccion_raw = leer_linea(&prompt);
+    let seleccion_raw = read_in(&prompt);
     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
 
     if seleccion < 1 || seleccion > versiones_activas.len() {
@@ -284,7 +280,7 @@ pub fn disable_php_apache() {
     let comando_apache = Command::new("a2disconf")
         .arg(&nombre_fpm)
         .stdout(Stdio::null()) 
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     if evaluate!(comando_apache, true) {
@@ -298,7 +294,7 @@ pub fn disable_php_apache() {
     let comando_sys = Command::new("systemctl")
         .args(&["stop", &nombre_fpm])
         .stdout(Stdio::null()) 
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     evaluate!(comando_sys, true);
@@ -313,7 +309,7 @@ pub fn enable_php_apache() {
         return;
     }
 
-    limpiar_pantalla();
+    clear_screen();
 
     // 2. Mostrar menú de configuraciones disponibles
     println!("=========================================");
@@ -326,7 +322,7 @@ pub fn enable_php_apache() {
 
     // 3. Lectura de la selección del usuario
     let prompt = rust_i18n::t!("PROMPT_ENABLE_FPM", max = versiones_disponibles.len());
-    let seleccion_raw = leer_linea(&prompt);
+    let seleccion_raw = read_in(&prompt);
     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
 
     if seleccion < 1 || seleccion > versiones_disponibles.len() {
@@ -344,7 +340,7 @@ pub fn enable_php_apache() {
     let status_fpm = Command::new("systemctl")
         .args(&["start", &nombre_fpm])
         .stdout(Stdio::null()) 
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     // Si la macro detecta que el servicio NO inició, hacemos un 'return' temprano seguro
@@ -366,7 +362,7 @@ pub fn enable_php_apache() {
     let status_apache = Command::new("a2enconf")
         .arg(&nombre_fpm)
         .stdout(Stdio::null()) 
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     if evaluate!(status_apache, true) {
@@ -432,7 +428,7 @@ pub fn instalar_cms() {
     }
     println!("=========================================");
 
-    let seleccion_sitio_raw = leer_linea(&rust_i18n::t!("PROMPT_SELECT_SITE", max = sitios.len()));
+    let seleccion_sitio_raw = read_in(&rust_i18n::t!("PROMPT_SELECT_SITE", max = sitios.len()));
     let seleccion_sitio: usize = seleccion_sitio_raw.trim().parse().unwrap_or(0);
 
     if seleccion_sitio < 1 || seleccion_sitio > sitios.len() {
@@ -442,7 +438,7 @@ pub fn instalar_cms() {
 
     let sitio_elegido = &sitios[seleccion_sitio - 1];
 
-    limpiar_pantalla();
+    clear_screen();
     println!("=========================================");
     println!("     {}        ", rust_i18n::t!("CMS_GESTOR_TITLE"));
     println!(" {}: {}", rust_i18n::t!("SITE_DEST"), sitio_elegido.nombre);
@@ -457,7 +453,7 @@ pub fn instalar_cms() {
     println!("0) Cancelar");
     println!("=========================================");
 
-    let cms_seleccionado = leer_linea("Selecciona una opción [0-6]: ");
+    let cms_seleccionado = read_in("Selecciona una opción [0-6]: ");
     
     // Mapeamos la selección a nuestra estructura de paquetes
     let paquete_cms = match cms_seleccionado.trim() {
@@ -476,7 +472,7 @@ pub fn instalar_cms() {
         }
         "6" => {
             println!("[!] ADVERTENCIA: Se eliminará TODO el contenido de {}", sitio_elegido.ruta);
-            if leer_linea("¿Estás seguro? (s/n): ").trim().to_lowercase() == "s" {
+            if read_in("¿Estás seguro? (s/n): ").trim().to_lowercase() == "s" {
                 let cmd_limpiar = format!("find {} -mindepth 1 -delete", sitio_elegido.ruta);
                 evaluate!(Command::new("bash").args(&["-c", &cmd_limpiar]).status(), true);
             }
@@ -516,11 +512,11 @@ pub fn instalar_cms() {
         if !directorio_vacio {
             println!("\n{}", rust_i18n::t!("DIRECTORY_NOT_EMPTY", dir = &sitio_elegido.ruta));
             println!("{}", rust_i18n::t!("WHAT_TO_DO"));
-            println!("{}", rust_i18n::t!("CLEAN_BEFORE_INSTALL"));
+            println!("{}", rust_i18n::t!("clear_BEFORE_INSTALL"));
             println!("{}", rust_i18n::t!("KEEP_EXISTING_FILES"));
             println!("{}", rust_i18n::t!("CANCEL_INSTALL"));
             
-            let accion = leer_linea("Selecciona una opción [0-2]: ");
+            let accion = read_in("Selecciona una opción [0-2]: ");
             if accion.trim() == "1" {
                 let cmd_limpiar = format!("find {} -mindepth 1 -delete", sitio_elegido.ruta);
                 let _ = Command::new("bash").args(&["-c", &cmd_limpiar]).status();
@@ -600,7 +596,7 @@ pub fn editar_sitio_apache() {
         println!("{}) {}", i + 1, entry.file_name().to_string_lossy());
     }
 
-    let sel = leer_linea(&rust_i18n::t!("PROMPT_OPTION")).parse::<usize>().unwrap_or(0);
+    let sel = read_in(&rust_i18n::t!("PROMPT_OPTION")).parse::<usize>().unwrap_or(0);
     if sel == 0 || sel > archivos.len() { 
         println!("[X] {}", rust_i18n::t!("INVALID_OPTION")); 
         return; 
@@ -630,7 +626,7 @@ pub fn editar_sitio_apache() {
     println!("{}", rust_i18n::t!("EDITING_SITE", name = nombre_archivo));
     
     // 5. Modificaciones interactivas
-    let nuevo_root = leer_linea(&rust_i18n::t!("PROMPT_NEW_DOCROOT"));
+    let nuevo_root = read_in(&rust_i18n::t!("PROMPT_NEW_DOCROOT"));
     if !nuevo_root.is_empty() {
         contenido = re.docroot.replace(&contenido, format!("DocumentRoot {}", nuevo_root)).to_string();
         contenido = re.dir.replace(&contenido, format!("<Directory {}>", nuevo_root)).to_string();
@@ -638,12 +634,12 @@ pub fn editar_sitio_apache() {
 
     versiones_instaladas_php(); // Tu función existente que lista las versiones de PHP en el sistema
 
-    let nueva_ver = leer_linea(&rust_i18n::t!("PROMPT_NEW_PHP_VER"));
+    let nueva_ver = read_in(&rust_i18n::t!("PROMPT_NEW_PHP_VER"));
     if !nueva_ver.is_empty() {
         contenido = re.php.replace(&contenido, format!("php{}-fpm.sock", nueva_ver)).to_string();
     }
 
-    let nuevo_name = leer_linea(&rust_i18n::t!("PROMPT_NEW_SERVERNAME"));
+    let nuevo_name = read_in(&rust_i18n::t!("PROMPT_NEW_SERVERNAME"));
     if !nuevo_name.is_empty() {
         contenido = re.servername.replace(&contenido, format!("ServerName {}", nuevo_name)).to_string();
     }

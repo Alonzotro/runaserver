@@ -1,14 +1,14 @@
 // ==========================================
 // PHP MANAGEMENT
 // ==========================================
-use crate::{registrar_log_error, leer_linea, limpiar_pantalla, Evaluable, evaluate, LOG_ERRORES, OK, WARNING, ERROR_YOU, ERROR_PC};
+use crate::evaluate;
+use crate::public::{error_log, clear_screen, print_header, read_in, line, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 use std::fs::{self, OpenOptions};
 use std::io::{Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 //No visual
-
 fn get_availables_php() -> Vec<String> {
     let mut versiones = Vec::new();
     
@@ -72,25 +72,20 @@ fn get_installed_php() -> Vec<String> {
 pub fn install_php() {
     let versiones_disponibles = get_availables_php();
 
-
-
     if versiones_disponibles.is_empty() {
         println!("Error: No se encontraron versiones de PHP disponibles en tus repositorios de apt.");
         println!("Asegúrate de tener configurado el repositorio de Ondřej Surý.");
         return;
     }
 
-    limpiar_pantalla();
-
-    println!("=========================================");
-    println!("       VERSIONES DE PHP DISPONIBLES      ");
-    println!("=========================================");
+    clear_screen();
+    print_header("VERSIONES DE PHP DISPONIBLES");
     for (i, ver) in versiones_disponibles.iter().enumerate() {
         println!("{}) PHP {}", i + 1, ver);
     }
-    println!("=========================================");
+    line();
     
-    let seleccion_raw = leer_linea(&format!("Selecciona una opción [1-{}]: ", versiones_disponibles.len()));
+    let seleccion_raw = read_in(&format!("Selecciona una opción [1-{}]: ", versiones_disponibles.len()));
     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
 
     if seleccion < 1 || seleccion > versiones_disponibles.len() {
@@ -98,11 +93,11 @@ pub fn install_php() {
         return;
     }
 
-    limpiar_pantalla();
+    clear_screen();
 
     println!("Actualizando repositorios...");
-    let _ = Command::new("apt-get").args(&["update"]).stdout(Stdio::null()).stderr(registrar_log_error()).status();
-    let _ = Command::new("apt-get").args(&["upgrade", "-y"]).stdout(Stdio::null()).stderr(registrar_log_error()).status();
+    let _ = Command::new("apt-get").args(&["update"]).stdout(Stdio::null()).stderr(error_log()).status();
+    let _ = Command::new("apt-get").args(&["upgrade", "-y"]).stdout(Stdio::null()).stderr(error_log()).status();
 
     let version_php = &versiones_disponibles[seleccion - 1];
     println!("Filtrando módulos compatibles para PHP {}...", version_php);
@@ -185,7 +180,7 @@ pub fn install_php() {
         .arg("-y")
         .args(&paquetes_validos)
         .stdout(Stdio::null())
-        .stderr(registrar_log_error());
+        .stderr(error_log());
     
     let nombre_modulo = format!("php{}", version_php);
     let nombre_fpm = format!("php{}-fpm", version_php);
@@ -220,21 +215,20 @@ pub fn install_php() {
 
 
 pub fn versiones_instaladas_php() -> bool {
-    println!("=========================================");
-    println!("       VERSIONES DE PHP INSTALADAS       ");
-    println!("=========================================");
+    print_header("VERSIONES DE PHP INSTALADAS");
+
     let versiones = get_installed_php();
 
     if versiones.is_empty() {
         println!("[!] No hay ninguna versión de PHP instalada.");
-        println!("=========================================");
+        line();
         return false;
     }
 
     for (i, ver) in versiones.iter().enumerate() {
         println!("{}) PHP {}", i + 1, ver);
     }
-    println!("=========================================");
+    line();
     true
 }
 
@@ -247,20 +241,17 @@ pub fn desinstalacion_php() {
         return;
     }
 
-    limpiar_pantalla();
-
-    println!("=========================================");
-    println!("      VERSIONES DE PHP INSTALADAS        ");
-    println!("=========================================");
+    clear_screen();
+    print_header("VERSIONES DE PHP INSTALADAS");
     // 2. Iterar visualmente con base 1
     for (i, ver) in versiones_instaladas.iter().enumerate() {
         println!("{}) PHP {}", i + 1, ver);
     }
-    println!("=========================================");
-    println!("Enter o cualquier otra tecla para cancelar.");
-    println!("=========================================");
+
+    print_header("Enter o cualquier otra tecla para cancelar.");
+
     
-    let seleccion_raw = leer_linea(&format!("Selecciona la versión que deseas eliminar [1-{}]: ", versiones_instaladas.len()));
+    let seleccion_raw = read_in(&format!("Selecciona la versión que deseas eliminar [1-{}]: ", versiones_instaladas.len()));
     
     // 3. Leer y parsear seguro (si mete texto o Enter vacío, cae en 0)
     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
@@ -274,7 +265,7 @@ pub fn desinstalacion_php() {
     // 5. Mapeo inverso para obtener la versión exacta del array
     let version = &versiones_instaladas[seleccion - 1];
 
-    limpiar_pantalla();
+    clear_screen();
 
     println!("=== Iniciando la desinstalación completa de PHP {} ===", version);
     println!("Eliminando paquetes y configuraciones de PHP {}...", version);
@@ -287,7 +278,7 @@ pub fn desinstalacion_php() {
         .env("DEBIAN_FRONTEND", "noninteractive")
         .args(["purge", "-y", &target_pkg, &target_mod])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     match status {
@@ -305,18 +296,15 @@ pub fn desinstalacion_php() {
         .env("DEBIAN_FRONTEND", "noninteractive")
         .args(["autoremove", "--purge", "-y", "-qq"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
 
     let _ = Command::new("apt-get")
-        .args(["clean"])
+        .args(["clear"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
-
-    println!("=========================================");
-    println!("     ¡Proceso de limpieza terminado!     ");
-    println!("=========================================");
+    print_header("¡Proceso de limpieza terminado!")
 }
 
 pub fn modulos_php() {
@@ -324,23 +312,20 @@ pub fn modulos_php() {
     let versiones_instaladas = get_installed_php();
 
     if versiones_instaladas.is_empty() {
-        println!("   [!] No hay ninguna versión de PHP instalada.");
+        println!("[!] No hay ninguna versión de PHP instalada.");
         return;
     }
 
-    limpiar_pantalla();
-
-    println!("=========================================");
-    println!("      VERSIONES DE PHP INSTALADAS        ");
-    println!("=========================================");
+    clear_screen();
+    print_header("VERSIONES DE PHP INSTALADAS");
     // Imprimimos las versiones con su número correspondiente
     for (i, ver) in versiones_instaladas.iter().enumerate() {
         println!("{}) PHP {}", i + 1, ver);
     }
-    println!("=========================================");
+    line();
     
     // Leemos la opción del usuario
-    let seleccion_raw = leer_linea(&format!("Selecciona la versión para gestionar sus módulos [1-{}]: ", versiones_instaladas.len()));
+    let seleccion_raw = read_in(&format!("Selecciona la versión para gestionar sus módulos [1-{}]: ", versiones_instaladas.len()));
     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
 
     if seleccion < 1 || seleccion > versiones_instaladas.len() {
@@ -351,7 +336,7 @@ pub fn modulos_php() {
     // 2. Extraemos la versión exacta basada en el número seleccionado
     let ver_mod = &versiones_instaladas[seleccion - 1];
 
-    limpiar_pantalla();
+    clear_screen();
     println!("--- Módulos instalados en el sistema para PHP {} ---", ver_mod);
     
     let mut modulos_instalados = Vec::new();
@@ -380,7 +365,7 @@ pub fn modulos_php() {
     println!("--------------------------------------------------------");
 
     // 4. Permitimos borrar múltiples módulos ingresando solo sus números
-    let input_mods_raw = leer_linea("Ingresa los NÚMEROS de los módulos a borrar separados por espacio (Ej: 1 3 5) o Enter para omitir: ");
+    let input_mods_raw = read_in("Ingresa los NÚMEROS de los módulos a borrar separados por espacio (Ej: 1 3 5) o Enter para omitir: ");
     
     if input_mods_raw.trim().is_empty() {
         println!("Operación finalizada sin borrar módulos.");
@@ -411,10 +396,10 @@ pub fn modulos_php() {
             .arg("-y")
             .args(&mods_a_borrar) // Pasamos el array de Strings con los nombres de los paquetes
             .stdout(Stdio::null())
-            .stderr(registrar_log_error());
+            .stderr(error_log());
 
         if apt_purge.status().is_ok() {
-            let _ = Command::new("apt-get").args(&["autoremove", "-y"]).stdout(Stdio::null()).stderr(registrar_log_error()).status();
+            let _ = Command::new("apt-get").args(&["autoremove", "-y"]).stdout(Stdio::null()).stderr(error_log()).status();
             println!("   [✓] Módulos eliminados correctamente.");
         } else {
             println!("   [X] Error al intentar eliminar los módulos.");
@@ -429,9 +414,7 @@ pub fn cambiar_php() {
 }
 
 pub fn php_activo() {
-    println!("=========================================");
-    println!("          ESTADO ACTUAL DE PHP           ");
-    println!("=========================================");
+    print_header("ESTADO ACTUAL DE PHP");
 
     // 1. Consultar la versión de PHP del sistema (CLI)
     // Ejecutamos un pequeño script de PHP para que nos devuelva solo "8.1", "8.2", etc.
@@ -461,5 +444,5 @@ pub fn php_activo() {
     // Imprimir los resultados
     println!("PHP del Sistema (CLI) : {}", cli_php);
     println!("PHP activo en Apache  : {}", apache_php);
-    println!("=========================================");
+    line();
 }

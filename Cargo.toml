@@ -1,0 +1,11 @@
+[package]
+name = "runaserver"
+version = "1.6.7"
+edition = "2024"
+
+[dependencies]
+rpassword = "7.3"
+libc = "0.2"
+regex = "1.12.3"
+mysql = "24.0"
+rust-i18n = "4.1.0"

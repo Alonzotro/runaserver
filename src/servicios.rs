@@ -1,7 +1,8 @@
 // ==========================================
 // SERVICIOS PRINCIPALES
 // ==========================================
-use crate::{registrar_log_error, leer_linea, limpiar_pantalla, Evaluable, evaluate, LOG_ERRORES, OK, WARNING, ERROR_YOU, ERROR_PC};
+use crate::{evaluate, read_in};
+use crate::public::{error_log, clear_screen, print_header, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 use std::fs::{self, OpenOptions};
 use std::env;
 use std::io::{self, Write};
@@ -9,12 +10,13 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 //use rust_i18n::t;
 
+
 fn update() {
     println!("{} {}",WARNING, rust_i18n::t!("UPDATING"));
     let status = Command::new("apt-get")
         .args(&["update", "-y"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_UPDATING"));
@@ -26,7 +28,7 @@ fn upgrade() {
     let status = Command::new("apt-get")
         .args(&["upgrade", "-y"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_UPGRADING"));
@@ -39,7 +41,7 @@ pub fn select_language() {
     println!("[2] Español");
     let _ = io::stdout().flush();
 
-    let opcion = leer_linea!("{} [1-2]: ", rust_i18n::t!("SELECT_OPTION"));
+    let opcion = read_in!("{} [1-2]: ", rust_i18n::t!("SELECT_OPTION"));
     match opcion.trim() {
         "1" | "" => {
             // Si elige 1, o escribe cualquier otra cosa, usamos inglés por defecto
@@ -66,20 +68,20 @@ pub fn upgrade_server() {
     let status = Command::new("apt-get")
         .args(&["autoremove", "-y"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_DELETE_PKG_OBS"));
     }
 
-    println!("{} {}",WARNING, rust_i18n::t!("CLEAN_CACHE"));
+    println!("{} {}",WARNING, rust_i18n::t!("clear_CACHE"));
     let status = Command::new("apt-get")
-        .args(&["autoclean", "-y"])
+        .args(&["autoclear", "-y"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
-        println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_CLEAN_CACHE"));
+        println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_clear_CACHE"));
     }
 }
 
@@ -102,7 +104,7 @@ pub fn install_needed_software() {
         // Establecer DEBIAN_FRONTEND evita que apt se quede bloqueado esperando interacción del usuario
         .env("DEBIAN_FRONTEND", "noninteractive") 
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
@@ -113,7 +115,7 @@ pub fn install_needed_software() {
     let status = Command::new("add-apt-repository")
         .args(["ppa:ondrej/php", "-y"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error()) // Revisa este log si algo falla
+        .stderr(error_log()) // Revisa este log si algo falla
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_ADD_REPOSITORY_PHP"));
@@ -122,7 +124,7 @@ pub fn install_needed_software() {
     let status = Command::new("add-apt-repository")
         .args(["ppa:ondrej/apache2", "-y"])
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_ADD_REPOSITORY_APACHE"));
@@ -140,7 +142,7 @@ pub fn install_needed_software() {
         ])
         .env("DEBIAN_FRONTEND", "noninteractive")
         .stdout(Stdio::null())
-        .stderr(registrar_log_error())
+        .stderr(error_log())
         .status();
     if !evaluate!(status, true) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_ESSENTIAL"));
@@ -159,7 +161,7 @@ pub fn drivers_needed() {
     println!("2) VMWare");
     println!("3) {}", rust_i18n::t!("NO_VM"));
     println!("=========================================");
-    let vm = leer_linea!("{} [1-3]: ", rust_i18n::t!("SELECT_OPTION"));
+    let vm = read_in!("{} [1-3]: ", rust_i18n::t!("SELECT_OPTION"));
     
     let opcion = vm.trim();
 
@@ -170,36 +172,36 @@ pub fn drivers_needed() {
     // 2. Ejecutamos el match y recolectamos el status de forma limpia
     let resultado_comando = match opcion {
         "1" => {
-            limpiar_pantalla();
+            clear_screen();
             update();
             let status = Command::new("apt-get")
                 .args(&["install", "build-essential", "dkms", "virtualbox-guest-x11", "virtualbox-guest-utils", "-y"])
                 .stdout(Stdio::null())
-                .stderr(registrar_log_error())
+                .stderr(error_log())
                 .status();
             
             println!("{}", rust_i18n::t!("RECOMMENDED_VIRTUALBOX"));
             Some(status)
         }
         "2" => {
-            limpiar_pantalla();
+            clear_screen();
             update();
             let status = Command::new("apt-get")
                 .args(&["install", "open-vm-tools", "open-vm-tools-desktop", "-y"])
                 .stdout(Stdio::null())
-                .stderr(registrar_log_error())
+                .stderr(error_log())
                 .status();
             
             Some(status)
         }
         "3" => {
-            limpiar_pantalla();
+            clear_screen();
             update();
             upgrade();
             let status = Command::new("apt-get")
                 .args(&["install", "linux-headers-generic", "firmware-linux-free", "-y"])
                 .stdout(Stdio::null())
-                .stderr(registrar_log_error()) 
+                .stderr(error_log()) 
                 .status();
 
             Some(status)
@@ -228,7 +230,7 @@ pub fn reboot() {
     println!("{} {} {}",WARNING,rust_i18n::t!("CAUTION"),rust_i18n::t!("NOTICE"));
     println!("=========================================\n");
 
-    let confirmacion = leer_linea!(&rust_i18n::t!("SURE_ACCION"));
+    let confirmacion = read_in!(&rust_i18n::t!("SURE_ACCION"));
 
     match confirmacion.trim().to_lowercase().as_str() {
         "s" | "si" | "y" | "yes" => {
@@ -241,7 +243,7 @@ pub fn reboot() {
             }
         }
         _ => {
-            limpiar_pantalla();
+            clear_screen();
         }
     }
 }

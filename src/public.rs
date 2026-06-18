@@ -104,12 +104,34 @@ macro_rules! read_in {
     }};
 }
 
-pub fn command(command: &str, args: &[&str], output: bool) -> bool {
+pub fn command(command: &str, args: &[&str], result: bool, stderr: Stdio, stdout: Stdio) -> bool {
     evaluate!(Command::new(command)
     .args(args)
-    .stdout(Stdio::null())
-    .stderr(error_log()).status()
-    , output)
+    .stdout(stdout)
+    .stderr(stderr).status()
+    , result)
+}
+
+#[macro_export]
+macro_rules! command {
+    // Escenario 1: Solo comando y argumentos (Asume mostrar=true y silenciar stdout)
+    ($cmd:expr, $args:expr) => {
+        $crate::public::command($cmd, $args, true, std::process::Stdio::null(), $crate::public::error_log())
+    };
+    
+    // Escenario 2: Comando, argumentos y si quieres mostrar el log de evaluate!
+    ($cmd:expr, $args:expr, $show:expr) => {
+        $crate::public::command($cmd, $args, $show, std::process::Stdio::null(), $crate::public::error_log())
+    };
+
+    // Escenario 3: Control total (Comando, argumentos, mostrar log, y configuración de Stdio)
+    ($cmd:expr, $args:expr, $show:expr, $stdout:expr) => {
+        $crate::public::command($cmd, $args, $show, $stdout, $crate::public::error_log())
+    };
+
+    ($cmd:expr, $args:expr, $show:expr, $stdout:expr, $stderr:expr) => {
+        $crate::public::command($cmd, $args, $show, $stdout, $stderr)
+    };
 }
 
 // 1. Creamos la "interfaz" para que cualquier cosa pueda ser evaluada
@@ -224,6 +246,20 @@ impl Evaluable for io::Result<Output> {
                 None
             }
         }
+    }
+}
+
+impl Evaluable for bool {
+    type Output = bool;
+    fn evaluate(self, show: bool) -> Self::Output {
+        if show {
+            if self {
+                println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));
+            } else {
+                println!("{} {}", WARNING, rust_i18n::t!("RESULT"));
+            }
+        }
+        self
     }
 }
 

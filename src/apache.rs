@@ -1,7 +1,7 @@
 // ==========================================
 // APACHE MANAGEMENT
 // ==========================================
-use crate::evaluate;
+use crate::{evaluate,command};
 use crate::public::{error_log, clear_screen, print_header, read_in, command, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 
 use crate::php::{versiones_instaladas_php};
@@ -48,23 +48,23 @@ pub fn config_apache() {
 
     // 1. Configurar el Firewall
     println!("{}", rust_i18n::t!("CONFIGURING_FIREWALL"));
-    command("ufw", &["allow", "Apache Full"], true);
+    command!("ufw", &["allow", "Apache Full"], true);
 
     // 2. Reiniciar Apache
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
-    command("systemctl", &["restart", "apache2"], true);
+    command!("systemctl", &["restart", "apache2"], true);
 
     // 3. Deshabilitar MPM Prefork
     println!("{}", rust_i18n::t!("DISABLING_MPM"));
-    command("a2dismod", &["mpm_prefork"], true);
+    command!("a2dismod", &["mpm_prefork"], true);
 
     // 4. Habilitar MPM Event y módulos FCGI
     println!("{}", rust_i18n::t!("ENABLING_FPM"));
-    command("a2enmod", &["mpm_event", "proxy_fcgi", "setenvif"], true);
+    command!("a2enmod", &["mpm_event", "proxy_fcgi", "setenvif"], true);
 
     // 5. Habilitar módulos adicionales
     println!("{}", rust_i18n::t!("ENABLING_ADDITIONAL_MODULES"));
-    command("a2enmod", &["actions", "fcgid", "alias", "proxy_fcgi"], true);
+    command!("a2enmod", &["actions", "fcgid", "alias", "proxy_fcgi"], true);
 
     // ¡Éxito total!
     println!("{} {}", OK, rust_i18n::t!("CONFIGURED_SUCCESS"));
@@ -75,7 +75,7 @@ pub fn reiniciar_apache() {
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
 
     // 2. Evaluamos el comando directamente con la macro
-    if !command("systemctl", &["restart", "apache2"], true) {
+    if !command!("systemctl", &["restart", "apache2"], true) {
         println!("[X] {}", rust_i18n::t!("APACHE_RESTART_ERROR_TIP"));
     }
 }

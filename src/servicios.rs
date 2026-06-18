@@ -1,7 +1,7 @@
 // ==========================================
 // SERVICIOS PRINCIPALES
 // ==========================================
-use crate::{evaluate, read_in};
+use crate::{evaluate, read_in, command};
 use crate::public::{error_log, clear_screen, print_header, line, command, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 use std::fs::{self, OpenOptions};
 use std::env;
@@ -12,28 +12,17 @@ use std::process::{Command, Stdio};
 
 
 fn update() {
-    println!("{} {}",WARNING, rust_i18n::t!("UPDATING"));
-    let status = Command::new("apt-get")
-        .arg("update")
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
+    println!("{} {}",INFO, rust_i18n::t!("UPDATING"));
+    let status = command!("apt-get", &["update"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_UPDATING"));
     }
-
-    command("apt-get", &["update"], false, );
-
 }
 
 fn upgrade() {
-    println!("{} {}",WARNING, rust_i18n::t!("UPGRADING"));
-    let status = Command::new("apt-get")
-        .args(&["upgrade", "-y"])
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
+    println!("{} {}",INFO, rust_i18n::t!("UPGRADING"));
+    let status = command!("apt-get", &["upgrade"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_UPGRADING"));
     }
 }
@@ -68,88 +57,53 @@ pub fn upgrade_server() {
 
     upgrade();
 
-    println!("{} {}",WARNING, rust_i18n::t!("DELETE_PKG_OBS"));
-    let status = Command::new("apt-get")
-        .args(&["autoremove", "-y"])
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
+    println!("{} {}",INFO, rust_i18n::t!("DELETE_PKG_OBS"));
+    let status = command!("apt-get", &["autoremove", "-y"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_DELETE_PKG_OBS"));
     }
 
-    println!("{} {}",WARNING, rust_i18n::t!("clear_CACHE"));
-    let status = Command::new("apt-get")
-        .args(&["autoclean", "-y"])
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
+    println!("{} {}",INFO, rust_i18n::t!("clear_CACHE"));
+    let status = command!("apt-get", &["autoclean", "-y"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_clear_CACHE"));
     }
 }
 
-pub fn passwd_root() -> bool {
-    println!("{} {}", WARNING, rust_i18n::t!("CHANGE_PASSWD"));
-    let status = Command::new("passwd").arg("root").status();
-    evaluate!(status, true)
+pub fn passwd_root() {
+    println!("{} {}", INFO, rust_i18n::t!("CHANGE_PASSWD"));
+    command!("passwd", &["root"], true, Stdio::inherit());
 }
 
 pub fn install_needed_software() {
     update();
 
     //Instala los paquetes necesarios
-    println!("{} {}", WARNING, rust_i18n::t!("INSTALL_NECESSARY"));
-    let status = Command::new("apt-get")
-        .args([
-            "install", "-y", 
-            "figlet", "software-properties-common", "wget", "tar", "libncurses6", "libnuma1", "openssl", "net-tools", "ufw", "ca-certificates", "apt-transport-https"
-        ])
-        // Establecer DEBIAN_FRONTEND evita que apt se quede bloqueado esperando interacción del usuario
-        .env("DEBIAN_FRONTEND", "noninteractive") 
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
+    println!("{} {}", INFO, rust_i18n::t!("INSTALL_NECESSARY"));
+    let status = command!("apt-get", &["install", "-y", "software-properties-common", "wget", "tar", "libncurses6", "libnuma1", "openssl", "net-tools", "ufw", "ca-certificates", "apt-transport-https"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
     }
 
-    println!("[1/2] {} {}", WARNING, rust_i18n::t!("ADD_REPOSITORY_PHP"));
-    //Agrega los repositorios de PHP
-    let status = Command::new("add-apt-repository")
-        .args(["ppa:ondrej/php", "-y"])
-        .stdout(Stdio::null())
-        .stderr(error_log()) // Revisa este log si algo falla
-        .status();
-    if !evaluate!(status, true) {
+    println!("[1/2] {} {}", INFO, rust_i18n::t!("ADD_REPOSITORY_PHP"));
+    let status = command!("add-apt-repository", &["ppa:ondrej/php", "-y"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_ADD_REPOSITORY_PHP"));
     }
-    println!("[2/2] {} {}", WARNING, rust_i18n::t!("ADD_REPOSITORY_APACHE"));
-    let status = Command::new("add-apt-repository")
-        .args(["ppa:ondrej/apache2", "-y"])
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
+
+    println!("[2/2] {} {}", INFO, rust_i18n::t!("ADD_REPOSITORY_APACHE"));
+    let status = command!("add-apt-repository", &["ppa:ondrej/apache2", "-y"], true);
+    if !status {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_ADD_REPOSITORY_APACHE"));
     }
 
     update();
 
     //Instala programas necesarios
-    println!("{} {} (Apache, MySQL, etc)...",WARNING, rust_i18n::t!("INSTALL_ESSENTIAL"));
-    let status = Command::new("apt-get")
-        .args([
-            "install", "-y", 
-            "apache2", "apache2-suexec-pristine", "apache2-suexec-custom", "libapache2-mod-fcgid",
-            "mysql-server", "mysql-client"
-        ])
-        .env("DEBIAN_FRONTEND", "noninteractive")
-        .stdout(Stdio::null())
-        .stderr(error_log())
-        .status();
-    if !evaluate!(status, true) {
-        println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_ESSENTIAL"));
+    println!("{} {} (Apache, MySQL, etc)...",INFO, rust_i18n::t!("INSTALL_ESSENTIAL"));;
+    let status = command!("apt-get", &["install", "-y", "apache2", "apache2-suexec-pristine", "apache2-suexec-custom", "libapache2-mod-fcgid", "mysql-server", "mysql-client"], true);
+    if !status {
+        println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
     }
 
     upgrade();
@@ -167,73 +121,56 @@ pub fn drivers_needed() {
     
     let opcion = vm.trim();
 
-    
-    
-
-
     // 2. Ejecutamos el match y recolectamos el status de forma limpia
-    let resultado_comando = match opcion {
+    match opcion {
         "1" => {
             clear_screen();
             println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
             update();
-            let status = Command::new("apt-get")
-                .args(&["install", "build-essential", "dkms", "virtualbox-guest-x11", "virtualbox-guest-utils", "-y"])
-                .stdout(Stdio::null())
-                .stderr(error_log())
-                .status();
-            
+
+            let status = command!("apt-get", &["install", "-y", "build-essential", "dkms", "virtualbox-guest-x11", "virtualbox-guest-utils"], true);
+            if !status {
+                println!("{} Error al instalar los drivers necesarios", ERROR_PC);
+            }
             println!("{}", rust_i18n::t!("RECOMMENDED_VIRTUALBOX"));
-            Some(status)
         }
         "2" => {
             clear_screen();
             println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
             update();
-            let status = Command::new("apt-get")
-                .args(&["install", "open-vm-tools", "open-vm-tools-desktop", "-y"])
-                .stdout(Stdio::null())
-                .stderr(error_log())
-                .status();
-            Some(status)
-            
+
+            let status = command!("apt-get", &["install", "-y", "open-vm-tools", "open-vm-tools-desktop"], true);
+            if !status {
+                println!("{} Error al instalar los drivers necesarios", ERROR_PC);
+            }
         }
         "3" => {
             clear_screen();
             println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
             update();
-            upgrade();
-            let status = Command::new("apt-get")
-                .args(&["install", "linux-headers-generic", "firmware-linux-free", "-y"])
-                .stdout(Stdio::null())
-                .stderr(error_log()) 
-                .status();
 
-            Some(status)
+            let status = command!("apt-get", &["install", "-y", "linux-headers-generic", "firmware-linux-free"], true);
+            if !status {
+                println!("{} Error al instalar los drivers necesarios", ERROR_PC);
+            }
         }
         _ => { //unreachable!(),
             println!("{} {}",ERROR_YOU,rust_i18n::t!("BAD_SELECTED"));
-            None
         }
     };
 
-    if let Some(status) = resultado_comando {
-        evaluate!(status, false);
-    }
 }
 
 pub fn permisos() {
-    println!("{} {}",WARNING,rust_i18n::t!("CHANGING_PERMISSION"));
-    let status = Command::new("chown").args(["-R", "www-data:www-data", "/var/www"]).status();
-    evaluate!(status, true);
+    println!("{} {}",INFO,rust_i18n::t!("CHANGING_PERMISSION"));
+    command!("chown", &["-R", "www-data:www-data", "/var/www"], true, Stdio::inherit());
 }
 
 pub fn reboot() {
-    println!("=========================================");
-    println!("          {}           ", rust_i18n::t!("REBOOT_SYSTEM"));
-    println!("=========================================");
+    print_header(&rust_i18n::t!("REBOOT_SYSTEM"));
+
     println!("{} {} {}",WARNING,rust_i18n::t!("CAUTION"),rust_i18n::t!("NOTICE"));
-    println!("=========================================\n");
+    line();
 
     let confirmacion = read_in!(&rust_i18n::t!("SURE_ACCION"));
 
@@ -255,9 +192,7 @@ pub fn reboot() {
 
 
 pub fn auto_start() {
-    println!("=========================================");
-    println!("    {}         ", rust_i18n::t!("CONFIG_AUTO_START_TITLE"));
-    println!("=========================================");
+    print_header(&rust_i18n::t!("CONFIG_AUTO_START_TITLE"));
 
     // 1. Obtener la ruta exacta del ejecutable actual
     println!("{}", rust_i18n::t!("GETTING_CURRENT_PATH"));

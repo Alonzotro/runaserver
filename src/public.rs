@@ -104,7 +104,7 @@ macro_rules! read_in {
     }};
 }
 
-pub fn command(command: &str, args: &[&str], result: bool, stderr: Stdio, stdout: Stdio) -> bool {
+pub fn command(command: &str, args: &[&str], result: bool, stdout: Stdio, stderr: Stdio) -> bool {
     evaluate!(Command::new(command)
     .args(args)
     .stdout(stdout)
@@ -134,10 +134,49 @@ macro_rules! command {
     };
 }
 
+pub fn output(command: &str, args: &[&str], result: bool) -> (Option<Output>, bool) {
+    evaluate!(Command::new(command)
+    .args(args)
+    .stderr(error_log())
+    .output()
+    , result)
+}
+
 // 1. Creamos la "interfaz" para que cualquier cosa pueda ser evaluada
 pub trait Evaluable {
     type Output;
     fn evaluate(self, show: bool) -> Self::Output;
+}
+
+impl Evaluable for io::Result<Output> {
+    type Output = (Option<Output>, bool);
+    fn evaluate(self, show: bool) -> Self::Output {
+        match self {
+            // 1. Accedemos a la propiedad .status del Output
+            Ok(output) if output.status.success() => {
+                if show { println!("{} {}", OK, rust_i18n::t!("RESULT_OK")); }
+                (Some(output), true)
+                
+            }
+            Ok(output) => {
+                if show { 
+                    println!("{} {}", WARNING, rust_i18n::t!("RESULT")); 
+                    // 2. Extraemos el código numérico (manejando si fue terminado por una señal con un default)
+                    let code = output.status.code().unwrap_or(-1);
+                    println!("{} {}", rust_i18n::t!("CODE"), code);
+                }
+                (None, false)
+
+            }
+            Err(e) => {
+                if show { 
+                    println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
+                    println!("{} {}", rust_i18n::t!("CODE"), e);
+                }
+                (None, false)
+            }
+        }
+    }
 }
 
 // 2. Implementación para Comandos de Terminal (ExitStatus)
@@ -221,29 +260,6 @@ impl Evaluable for io::Result<PathBuf> {
                     println!("{} {}", rust_i18n::t!("CODE"), e);
                 }
                 None // <-- Te regreso un None para avisar que falló
-            }
-        }
-    }
-}
-// Implementación para comandos de los que necesitamos extraer texto (.output())
-impl Evaluable for io::Result<Output> {
-    type Output = Option<Output>; // Nos devuelve el objeto Output dentro de un Option
-    fn evaluate(self, show: bool) -> Self::Output {
-        match self {
-            Ok(out) if out.status.success() => Some(out),
-            Ok(out) => {
-                if show { 
-                    println!("{} {}", WARNING, rust_i18n::t!("RESULT")); 
-                    println!("{} {}", rust_i18n::t!("CODE"), out.status);
-                }
-                None
-            }
-            Err(e) => {
-                if show { 
-                    println!("{} {} ", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                    println!("{} {}", rust_i18n::t!("CODE"), e);
-                }
-                None
             }
         }
     }

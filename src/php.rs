@@ -2,35 +2,57 @@
 // PHP MANAGEMENT
 // ==========================================
 use crate::evaluate;
-use crate::public::{error_log, clear_screen, print_header, read_in, line, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
+use crate::public::{error_log, clear_screen, print_header, read_in, line, command, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 use std::fs::{self, OpenOptions};
 use std::io::{Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::collections::BTreeSet;
 
 //No visual
 fn get_availables_php() -> Vec<String> {
-    let mut versiones = Vec::new();
-    
-    // Un solo comando con toda la tubería para buscar, filtrar y ordenar las versiones
-    let cmd = "apt-cache policy php[0-9].* 2>/dev/null | grep -oE '^php[0-9]\\.[0-9]' | grep -oE '[0-9]+\\.[0-9]+' | sort -uV";      
-    
-    // Pasamos el comando directo a evaluate!. 
-    // Usamos 'false' para que trabaje en silencio si todo va bien.
-    if let Some(out) = evaluate!(Command::new("bash").args(&["-c", cmd]).output(), false) {
-        // Convertimos los bytes de la terminal a texto legible
-        let stdout = String::from_utf8_lossy(&out.stdout);
+    // 1. Usamos .output() para capturar el texto.
+    // Tu macro evaluate! lo procesará y te devolverá un Option<Output>
+    let resultado_output = evaluate!(
+        Command::new("apt-cache")
+            .args(&["policy", "php[0-9].*"])
+            .output(),
+        true
+    );
+
+    let mut versiones = BTreeSet::new();
+
+    // 2. Si evaluate! determinó que el comando fue Ok, extraemos el Output
+    if let Some(out) = resultado_output {
+        let stdout_str = String::from_utf8_lossy(&out.stdout);
         
-        // Procesamos línea por línea
-        for line in stdout.lines() {
-            let versión_limpia = line.trim();
-            if !versión_limpia.is_empty() {
-                versiones.push(versión_limpia.to_string());
+        for line in stdout_str.lines() {
+            // Simula: grep -oE '^php[0-9]\.[0-9]'
+            if line.starts_with("php") && line.len() >= 6 {
+                let posible_version = &line[3..];
+
+                // Simula el segundo grep (solo números y puntos)
+                let version_filtrada: String = posible_version
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '.')
+                    .collect();
+
+                // Separamos "8.1" en ["8", "1"]
+                let partes: Vec<&str> = version_filtrada.split('.').collect();
+                if partes.len() >= 2 {
+                    // Simula 'sort -uV': El BTreeSet ordena numéricamente y elimina duplicados
+                    if let (Ok(major), Ok(minor)) = (partes[0].parse::<u32>(), partes[1].parse::<u32>()) {
+                        versiones.insert((major, minor));
+                    }
+                }
             }
         }
     }
-        
-    versiones
+
+    // 3. Convertimos las tuplas (8, 1) de vuelta a "8.1"
+    versiones.into_iter()
+        .map(|(major, minor)| format!("{}.{}", major, minor))
+        .collect()
 }
 
 //No visual
@@ -213,23 +235,22 @@ pub fn install_php() {
     }
 }
 
-
-pub fn versiones_instaladas_php() -> bool {
+pub fn versiones_instaladas_php() -> (bool,Vec<String>) {
     print_header("VERSIONES DE PHP INSTALADAS");
 
-    let versiones = get_installed_php();
+    let versiones_instaladas = get_installed_php();
 
-    if versiones.is_empty() {
-        println!("[!] No hay ninguna versión de PHP instalada.");
+    if versiones_instaladas.is_empty() {
+        println!("{WARNING} No hay ninguna versión de PHP instalada.");
         line();
-        return false;
+        return (false, versiones_instaladas);
     }
 
-    for (i, ver) in versiones.iter().enumerate() {
+    for (i, ver) in versiones_instaladas.iter().enumerate() {
         println!("{}) PHP {}", i + 1, ver);
     }
     line();
-    true
+    return (true, versiones_instaladas); 
 }
 
 pub fn desinstalacion_php() {
@@ -309,20 +330,7 @@ pub fn desinstalacion_php() {
 
 pub fn modulos_php() {
     // 1. Obtenemos las versiones instaladas directamente en un Vec<String>
-    let versiones_instaladas = get_installed_php();
-
-    if versiones_instaladas.is_empty() {
-        println!("[!] No hay ninguna versión de PHP instalada.");
-        return;
-    }
-
-    clear_screen();
-    print_header("VERSIONES DE PHP INSTALADAS");
-    // Imprimimos las versiones con su número correspondiente
-    for (i, ver) in versiones_instaladas.iter().enumerate() {
-        println!("{}) PHP {}", i + 1, ver);
-    }
-    line();
+    let (_,versiones_instaladas) = versiones_instaladas_php();
     
     // Leemos la opción del usuario
     let seleccion_raw = read_in(&format!("Selecciona la versión para gestionar sus módulos [1-{}]: ", versiones_instaladas.len()));
@@ -337,7 +345,7 @@ pub fn modulos_php() {
     let ver_mod = &versiones_instaladas[seleccion - 1];
 
     clear_screen();
-    println!("--- Módulos instalados en el sistema para PHP {} ---", ver_mod);
+    print_header("Módulos instalados en el sistema para PHP {ver_mod}");
     
     let mut modulos_instalados = Vec::new();
     if let Ok(output) = Command::new("dpkg").arg("-l").output() {
@@ -362,7 +370,7 @@ pub fn modulos_php() {
     for (i, modulo) in modulos_instalados.iter().enumerate() {
         println!("{}) {}", i + 1, modulo);
     }
-    println!("--------------------------------------------------------");
+    line();
 
     // 4. Permitimos borrar múltiples módulos ingresando solo sus números
     let input_mods_raw = read_in("Ingresa los NÚMEROS de los módulos a borrar separados por espacio (Ej: 1 3 5) o Enter para omitir: ");

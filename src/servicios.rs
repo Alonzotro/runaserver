@@ -190,7 +190,6 @@ pub fn reboot() {
     }
 }
 
-
 pub fn auto_start() {
     print_header(&rust_i18n::t!("CONFIG_AUTO_START_TITLE"));
 

@@ -1,7 +1,7 @@
 // ==========================================
 // MYSQL MANAGEMENT
 // ==========================================
-use crate::public::{error_log, clear_screen, print_header, read_in, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
+use crate::public::{execute, evaluate, output, error_log, clear_screen, print_header, read_in, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 use mysql::{Conn, Opts};
@@ -10,20 +10,20 @@ use mysql::prelude::*;
 pub fn ajustar_politicas_password() {
     // 1. Intentamos instalar de ambas formas de manera silenciosa. 
     // Ignoramos el resultado porque si ya existen, saltará un error inocuo.
-    command("mysql", &["-u", "root", "-e", "INSTALL COMPONENT 'file://component_validate_password';"], true, true);
+    execute("mysql", &["-u", "root", "-e", "INSTALL COMPONENT 'file://component_validate_password';"], true, true);
 
-    command("mysql", &["-u", "root", "-e", "INSTALL PLUGIN validate_password SONAME 'validate_password.so';"], true, true);
+    execute("mysql", &["-u", "root", "-e", "INSTALL PLUGIN validate_password SONAME 'validate_password.so';"], true, true);
 
     // 2. Intentar ajuste con sintaxis de Componente (Usamos 0 que es LOW universalmente)
     let query_componente = "SET GLOBAL validate_password.policy=0; SET GLOBAL validate_password.length=4;";
-    if command("mysql", &["-u", "root", "-e", query_componente], true, false) {
+    if execute("mysql", &["-u", "root", "-e", query_componente], true, false) {
         println!("{} {}", OK, rust_i18n::t!("DB_POLICIES_SUCCESS"));
         return;
     }
 
     // 3. Fallback: Sintaxis de Plugin antiguo
     let query_plugin = "SET GLOBAL validate_password_policy=0; SET GLOBAL validate_password_length=4;";
-    if command("mysql", &["-u", "root", "-e", query_plugin], true, false) {
+    if execute("mysql", &["-u", "root", "-e", query_plugin], true, false) {
         println!("{} {}", OK, rust_i18n::t!("DB_POLICIES_SUCCESS"));
     }
 }
@@ -49,11 +49,11 @@ pub fn configurar_mysql_seguro() {
 
     // B. Inicio del servicio usando nuestro framework command
     println!("{}", rust_i18n::t!("STARTING_MYSQL"));
-    if !command("systemctl", &["start", "mysql"], false, true) { return; }
+    if !execute("systemctl", &["start", "mysql"]) { return; }
 
     // C. Modificación de la configuración bind-address
     println!("{}", rust_i18n::t!("UPDATING_BIND_ADDRESS"));
-    if !command("sed", &["-i", "s/bind-address.*/bind-address = 0.0.0.0/", "/etc/mysql/mysql.conf.d/mysqld.cnf"], false, true) { return; }
+    if !execute("sed", &["-i", "s/bind-address.*/bind-address = 0.0.0.0/", "/etc/mysql/mysql.conf.d/mysqld.cnf"]) { return; }
 
     // D. Ajustar políticas de contraseña previa instalación de la clave
     ajustar_politicas_password();
@@ -61,7 +61,7 @@ pub fn configurar_mysql_seguro() {
     // E. Inyectar contraseña inicial vía CLI
     println!("{}", rust_i18n::t!("SETTING_ROOT_PASS_OS"));
     let query_pass = format!("ALTER USER 'root'@'localhost' IDENTIFIED WITH caching_sha2_password BY '{}';", mysql_root_pass);
-    if !command("mysql", &["-u", "root", "-e", &query_pass], false, true) { return; }
+    if !execute("mysql", &["-u", "root", "-e", &query_pass]) { return; }
 
     // F. Conexión limpia ESTILO UNIX SOCKET (Soluciona el error de conexión)
     println!("{}", rust_i18n::t!("CONNECTING_RUST_MYSQL"));
@@ -104,10 +104,10 @@ pub fn configurar_mysql_seguro() {
 
     // H. Reinicio final y apertura de Firewall
     println!("{}", rust_i18n::t!("RESTARTING_MYSQL_FINAL"));
-    if !command("systemctl", &["restart", "mysql"], false, true) { return; }
+    if !execute("systemctl", &["restart", "mysql"]) { return; }
 
     println!("{}", rust_i18n::t!("OPENING_FIREWALL_3306"));
-    if !command("ufw", &["allow", "3306/tcp"], false, true) { return; }
+    if !execute("ufw", &["allow", "3306/tcp"]) { return; }
 
     println!("{} {}", OK, rust_i18n::t!("MYSQL_SUCCESS_FINAL"));
 }
@@ -127,7 +127,7 @@ pub fn instalar_phpmyadmin() {
     // 2. Inyectamos las respuestas a debconf vía STDIN usando un pipe en Bash.
     // Usamos ExecMode::Silent porque esto es pura carpintería interna.
     let debconf_cmd = format!("echo '{}' | debconf-set-selections", configs);
-    if !command("bash", &["-c", &debconf_cmd], false, false) {
+    if !execute("bash", &["-c", &debconf_cmd]) {
         println!("[X] Error al precargar las respuestas de debconf.");
         return;
     }
@@ -136,7 +136,7 @@ pub fn instalar_phpmyadmin() {
     // Usamos ExecMode::Interactive por si apt necesita mostrar barras de progreso en la TTY.
     let apt_args = ["-c", "DEBIAN_FRONTEND=noninteractive apt-get install -y phpmyadmin"];
     
-    if command("bash", &apt_args, true) {
+    if execute("bash", &apt_args) {
         println!("[✓] phpMyAdmin instalado con éxito.");
         println!("Puedes acceder en: http://tu-ip/phpmyadmin");
     } else {

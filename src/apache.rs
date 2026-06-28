@@ -1,7 +1,7 @@
 // ==========================================
 // APACHE MANAGEMENT
 // ==========================================
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, line, print_header, read_in};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, line, print_header, read_in, execute, evaluate, output};
 use crate::servicios::permisos;
 use crate::php::{versiones_instaladas_php};
 
@@ -108,23 +108,23 @@ pub fn config_apache() {
 
     // 1. Configurar el Firewall
     println!("{}", rust_i18n::t!("CONFIGURING_FIREWALL"));
-    command("ufw", &["allow", "Apache Full"], true, true);
+    execute("ufw", &["allow", "Apache Full"]);
 
     // 2. Reiniciar Apache
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
-    command("systemctl", &["restart", "apache2"], true, true);
+    execute("systemctl", &["restart", "apache2"]);
 
     // 3. Deshabilitar MPM Prefork
     println!("{}", rust_i18n::t!("DISABLING_MPM"));
-    command("a2dismod", &["mpm_prefork"], true, true);
+    execute("a2dismod", &["mpm_prefork"]);
 
     // 4. Habilitar MPM Event y módulos FCGI
     println!("{}", rust_i18n::t!("ENABLING_FPM"));
-    command("a2enmod", &["mpm_event", "proxy_fcgi", "setenvif"], true, true);
+    execute("a2enmod", &["mpm_event", "proxy_fcgi", "setenvif"]);
 
     // 5. Habilitar módulos adicionales
     println!("{}", rust_i18n::t!("ENABLING_ADDITIONAL_MODULES"));
-    command("a2enmod", &["actions", "fcgid", "alias", "proxy_fcgi"], true, true);
+    execute("a2enmod", &["actions", "fcgid", "alias", "proxy_fcgi"]);
 
     // ¡Éxito total!
     //println!("{} {}", OK, rust_i18n::t!("CONFIGURED_SUCCESS"));
@@ -135,117 +135,126 @@ pub fn reiniciar_apache() {
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
 
     // 2. Evaluamos el comando directamente con la macro
-    if !command("systemctl", &["restart", "apache2"], true, false) {
+    if !execute("systemctl", &["restart", "apache2"]) {
         println!("[X] {}", rust_i18n::t!("APACHE_RESTART_ERROR_TIP"));
     }
 }
 
+fn io_ok(resultado: io::Result<()>) -> bool {
+    match resultado {
+        Ok(_) => true,
+        Err(e) => {
+            println!("{} {}", ERROR_PC, e);
+            false
+        }
+    }
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────────
+ 
 pub fn add_site_apache(ip: &str) {
-    // 1. Solicitar y validar el nombre del sitio
+    // 1. Solicitar y validar nombre del sitio
     let sitio_raw = read_in(&rust_i18n::t!("PROMPT_SITE_NAME"));
     let sitio = sitio_raw.trim();
-
-    if sitio.is_empty() || !sitio.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
+ 
+    if sitio.is_empty()
+        || !sitio.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
         println!("[X] {}", rust_i18n::t!("INVALID_SITE_NAME"));
         return;
     }
-
-    let conf_dir = "/etc/apache2/sites-available";
-    let conf_file = format!("{}/{}.conf", conf_dir, sitio);
-    let web_dir = format!("/var/www/{}", sitio);
-
+ 
+    // 2. Rutas y comprobación de duplicado
+    let conf_file = format!("/etc/apache2/sites-available/{}.conf", sitio);
+    let web_dir   = format!("/var/www/{}", sitio);
+ 
     if Path::new(&conf_file).exists() {
         println!("[X] {}", rust_i18n::t!("SITE_ALREADY_EXISTS", site = sitio));
         return;
     }
-
+ 
+    // 3. Seleccionar versión PHP-FPM disponible
     let versiones = get_php_fpm();
-
     if versiones.is_empty() {
         println!("[X] {}", rust_i18n::t!("NO_PHP_FPM_CONFIGS"));
         return;
     }
-
-    // 3. Menú de Selección de Versión de PHP
-    println!("=========================================");
-    println!("     {}     ", rust_i18n::t!("SELECT_PHP_VERSION_TITLE"));
-    println!("=========================================");
+ 
+    print_header(&rust_i18n::t!("SELECT_PHP_VERSION_TITLE"));
     for (i, ver) in versiones.iter().enumerate() {
         println!("{}) php{}", i + 1, ver);
     }
-    println!("=========================================");
-    
-    let sel_ver = read_in(&rust_i18n::t!("PROMPT_PHP_VERSION"));
-    let idx: usize = sel_ver.trim().parse().unwrap_or(0);
-
+    line();
+ 
+    let sel  = read_in(&rust_i18n::t!("PROMPT_PHP_VERSION"));
+    let idx: usize = sel.trim().parse().unwrap_or(0);
     if idx < 1 || idx > versiones.len() {
         println!("[X] {}", rust_i18n::t!("INVALID_PHP_VERSION"));
         return;
     }
     let ver_elegida = &versiones[idx - 1];
-
-    // 4. Generación del Contenido del VirtualHost
-    let contenido_vhost = format!(
+ 
+    // 4. Generar contenido del VirtualHost
+    let vhost = format!(
         "<VirtualHost *:80>\n\
         \tServerName {sitio}.lan\n\
-        \tDocumentRoot {web_dir}\n\n\
-        \t<Directory {web_dir}>\n\
+        \tDocumentRoot {web_dir}\n\
+        \n\
+        \t<Directory {web_dih}>\n\
         \t\tAllowOverride All\n\
         \t\tRequire all granted\n\
-        \t</Directory>\n\n\
+        \t</Directory>\n\
+        \n\
         \t<FilesMatch \"\\.php$\">\n\
         \t\t<IfModule mod_proxy_fcgi.c>\n\
         \t\t\tSetHandler \"proxy:unix:/run/php/php{ver}-fpm.sock|fcgi://localhost\"\n\
         \t\t</IfModule>\n\
         \t</FilesMatch>\n\
         </VirtualHost>",
-        sitio = sitio,
-        web_dir = web_dir,
-        ver = ver_elegida
+        sitio   = sitio,
+        web_dih = web_dir,
+        ver     = ver_elegida
     );
-
-    // 5. EJECUCIÓN DE COMANDOS CRÍTICOS PASO A PASO CON command
-
-    // Crear el archivo de configuración (.conf)
+ 
+    // 5. Crear archivo .conf
+    // FIX: fs::write devuelve Result<(), io::Error> → io_ok, no execute
     println!("{}", rust_i18n::t!("CREATING_VHOST"));
-    if !command(fs::write(&conf_file, contenido_vhost.as_bytes()), true) {
-        return;
-    }
-
-    // Crear el directorio web (Nativo de Rust en lugar de invocar `mkdir -p`)
+    if !io_ok(fs::write(&conf_file, &vhost)) { return; }
+ 
+    // 6. Crear directorio web
+    // FIX: mismo caso — io_ok en vez de execute(..., true)
     println!("{}", rust_i18n::t!("CREATING_WEB_DIR"));
-    if !command(fs::create_dir_all(&web_dir), true) {
-        return;
-    }
-
-    // Asignar los permisos del directorio
+    if !io_ok(fs::create_dir_all(&web_dir)) { return; }
+ 
+    // 7. Permisos del directorio web
     println!("{}", rust_i18n::t!("SETTING_WEB_PERMISSIONS"));
-    permisos();
-
-    // Habilitar el sitio en Apache
+    permisos(); // pasa la ruta; ajusta la firma de permisos() si hace falta
+ 
+    // 8. Habilitar el sitio en Apache
+    // FIX: .status() devuelve Result<ExitStatus, io::Error> → evaluate, no execute
     println!("{}", rust_i18n::t!("ENABLING_SITE_APACHE"));
-    if !command(Command::new("a2ensite").arg(format!("{}.conf", sitio)).stdout(Stdio::null()).status(), true) {
+    if !evaluate(
+        Command::new("a2ensite")
+            .arg(format!("{}.conf", sitio))
+            .stdout(Stdio::null())
+            .status(),
+    ) {
         return;
     }
-    
-    // Actualizar el archivo /etc/hosts de forma segura y evaluada
+ 
+    // 9. Agregar entrada a /etc/hosts
+    // FIX: writeln! devuelve Result<(), io::Error> → io_ok, no execute
     println!("{}", rust_i18n::t!("UPDATING_HOSTS_FILE"));
     let hosts_result = OpenOptions::new()
         .append(true)
         .open("/etc/hosts")
-        .and_then(|mut file| writeln!(file, "{}   {}.lan", ip, sitio));
-
-    if !command(hosts_result, true) {
-        return;
-    }
-
-    // Reiniciar Apache para levantar el sitio
+        .and_then(|mut f| writeln!(f, "{}   {}.lan", ip, sitio));
+    if !io_ok(hosts_result) { return; }
+ 
+    // 10. Reiniciar Apache
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
-    if !command(Command::new("systemctl").args(&["restart", "apache2"]).status(), true) {
-        return;
-    }
-
-    // ¡Éxito absoluto!
+    if !execute("systemctl", &["restart", "apache2"]) { return; }
+ 
     println!("{} {}", OK, rust_i18n::t!("SITE_CREATED_SUCCESS", site = sitio, version = ver_elegida));
 }
 
@@ -292,7 +301,7 @@ pub fn disable_php_apache() {
         .stderr(error_log())
         .status();
 
-    if command(comando_apache, true) {
+    if execute(comando_apache, true) {
         // Si se deshabilitó con éxito, pintamos el recordatorio debajo del [✓]
         println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
     }
@@ -306,7 +315,7 @@ pub fn disable_php_apache() {
         .stderr(error_log())
         .status();
 
-    command(comando_sys, true);
+    execute(comando_sys, true);
 }
 
 pub fn enable_php_apache() {
@@ -352,7 +361,7 @@ pub fn enable_php_apache() {
         .status();
 
     // Si la macro detecta que el servicio NO inició, hacemos un 'return' temprano seguro
-    if !command(status_fpm, true) {
+    if !execute(status_fpm, true) {
         return; 
     }
 
@@ -373,7 +382,7 @@ pub fn enable_php_apache() {
         .stderr(error_log())
         .status();
 
-    if command(status_apache, true) {
+    if execute(status_apache, true) {
         // Si se enlazó con éxito, pintamos el recordatorio de reinicio debajo del [✓]
         println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
     }
@@ -471,7 +480,7 @@ pub fn instalar_cms() {
         "4" => Some(CmsPaquete { nombre: "Moodle", url: "https://download.moodle.org/download.php/direct/stable404/moodle-latest-404.tgz", archivo_cache: "moodle_4.x.tgz", es_zip: false }),
         "5" => {
             let ruta_info = format!("{}/info.php", sitio_elegido.ruta);
-            if command(fs::write(&ruta_info, "<?php phpinfo(); ?>\n"), true) {
+            if execute(fs::write(&ruta_info, "<?php phpinfo(); ?>\n"), true) {
                 let _ = Command::new("chown").args(&["www-data:www-data", &ruta_info]).status();
                 let dominio = sitio_elegido.nombre.replace(".conf", "");
                 println!("[i] Puedes verlo en: http://{}/info.php", dominio);
@@ -482,7 +491,7 @@ pub fn instalar_cms() {
             println!("[!] ADVERTENCIA: Se eliminará TODO el contenido de {}", sitio_elegido.ruta);
             if read_in("¿Estás seguro? (s/n): ").trim().to_lowercase() == "s" {
                 let cmd_limpiar = format!("find {} -mindepth 1 -delete", sitio_elegido.ruta);
-                command(Command::new("bash").args(&["-c", &cmd_limpiar]).status(), true);
+                execute(Command::new("bash").args(&["-c", &cmd_limpiar]).status(), true);
             }
             return;
         }
@@ -504,7 +513,7 @@ pub fn instalar_cms() {
         } else {
             // Si no existe, se descarga directamente a la caché
             println!("{}", rust_i18n::t!("DOWNLOADING_CMS", name = cms.nombre));
-            if !command(Command::new("wget").args(&["-qO", &ruta_completa_cache, cms.url]).status(), true) {
+            if !execute(Command::new("wget").args(&["-qO", &ruta_completa_cache, cms.url]).status(), true) {
                 return;
             }
         }
@@ -546,7 +555,7 @@ pub fn instalar_cms() {
             Command::new("tar").args(&["-xzf", &ruta_completa_cache, "--strip-components=1", "-C", &sitio_elegido.ruta]).status()
         };
 
-        if command(estatus_extraccion, true) {
+        if execute(estatus_extraccion, true) {
             // 5. Permisos Finales
             println!("{}", rust_i18n::t!("APPLYING_PERMISSIONS"));
             let _ = Command::new("chown").args(&["-R", "www-data:www-data", &sitio_elegido.ruta]).status();
@@ -615,7 +624,7 @@ pub fn editar_sitio_apache() {
     
     // 4. Crear backup evaluado (Si falla, se detiene por seguridad)
     let backup_path = format!("{}.bak", path.display());
-    if !command(fs::copy(&path, &backup_path), true) {
+    if !execute(fs::copy(&path, &backup_path), true) {
         return;
     }
     
@@ -653,7 +662,7 @@ pub fn editar_sitio_apache() {
     }
 
     // 6. Guardar cambios usando command
-    if !command(fs::write(&path, contenido), true) {
+    if !execute(fs::write(&path, contenido), true) {
         return;
     }
     println!("{}", rust_i18n::t!("FILE_UPDATED_BACKUP", backup = &backup_path));
@@ -670,7 +679,7 @@ pub fn editar_sitio_apache() {
     if test_status.is_ok() && test_status.unwrap().success() {
         // Si el test pasa, reiniciamos el servicio de forma limpia
         let restart_status = Command::new("systemctl").args(&["restart", "apache2"]).status();
-        if command(restart_status, true) {
+        if execute(restart_status, true) {
             println!("{}", rust_i18n::t!("CONFIG_VALID_RESTARTED"));
         }
     } else {

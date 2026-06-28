@@ -1,10 +1,5 @@
 use rust_i18n::t;
-//use std::fs::{OpenOptions};
 use std::io::{self, Read, Write};
-//use std::process::{Command, Stdio, ExitStatus};
-//use std::path::PathBuf;
-//use std::process::Output;
-//use std::net::IpAddr;
 use local_ip_address::local_ip;
 
 mod php;

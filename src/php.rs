@@ -1,7 +1,7 @@
 // ==========================================
 // PHP MANAGEMENT
 // ==========================================
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, Settings, WARNING, clear_screen, error_log, evaluate, findout_software, line, output, print_header, read_in};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, Settings, WARNING, clear_screen, error_log, evaluate, findout_software, line, output, print_header, read_in, search_json};
 use crate::servicios::{update};
 use std::fs::{self, OpenOptions};
 use std::io::{Write};
@@ -11,13 +11,13 @@ use std::collections::BTreeSet;
 
 //No visual
 /// Consulta en apt-cache los paquetes PHP disponibles en los repositorios
-pub fn get_availables_php(solo_php8: bool) -> Vec<String> {
+pub fn get_availables_php() -> Vec<String> {
     let (stdout, exito, _) = output("apt-cache", &["pkgnames", "php"]);
     if !exito {
         return Vec::new();
     }
     
-    extract_and_sort_versions(&stdout, solo_php8)
+    extract_and_sort_versions(&stdout)
 }
 
 /// Consulta en dpkg la base de datos real de paquetes PHP instalados
@@ -28,174 +28,153 @@ pub fn get_installed_php() -> Vec<String> {
         return Vec::new();
     }
 
-    extract_and_sort_versions(&stdout, false)
+    extract_and_sort_versions(&stdout)
 }
 
-// =====================================================================
-// MOTOR DE PARSEO ESTRICTO (Cero duplicación de código)
-// =====================================================================
 
-#[inline]
-fn extract_and_sort_versions(raw_text: &str, solo_php8: bool) -> Vec<String> {
+fn extract_and_sort_versions(raw_text: &str) -> Vec<String> {
     let mut versiones: BTreeSet<(u32, u32)> = BTreeSet::new();
-
+ 
     for linea in raw_text.lines() {
         let pkg = linea.trim();
-
-        // 1. Debe empezar por "php" seguido de un número (Descarta phpmyadmin, phpunit...)
+ 
+        // 1. Debe empezar por "php" seguido de un número
+        //    (descarta phpmyadmin, phpunit, libphp...)
         let Some(resto) = pkg.strip_prefix("php") else { continue };
-        if !resto.starts_with(|c: char| c.is_ascii_digit()) {
-            continue;
-        }
-
-        // 2. Tomamos bytes de dígitos y el punto principal (ej: "8.1-cli" -> "8.1")
+        if !resto.starts_with(|c: char| c.is_ascii_digit()) { continue }
+ 
+        // 2. Extraemos solo la parte numérica con punto ("8.1-cli" → "8.1")
         let version_str: String = resto
             .chars()
             .take_while(|c| c.is_ascii_digit() || *c == '.')
             .collect();
-
-        // 3. Corte exacto en el primer punto
-        let Some((major_str, minor_str)) = version_str.split_once('.') else {
-            continue;
-        };
-
-        // 4. Transformación segura a enteros (Protege contra "8." o "8.1.0")
-        let minor_clean: String = minor_str.chars().take_while(|c| c.is_ascii_digit()).collect();
-        
+ 
+        // 3. Separamos en major y minor
+        let Some((major_str, minor_str)) = version_str.split_once('.') else { continue };
+ 
+        // 4. minor_str puede ser "1" o "10-algo" → tomamos solo los dígitos
+        let minor_clean: String = minor_str
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+ 
+        // 5. Parseo seguro — descarta "8." o cualquier forma inválida
         let (Ok(major), Ok(minor)) = (major_str.parse::<u32>(), minor_clean.parse::<u32>()) else {
             continue;
         };
-
-        if !solo_php8 || major >= 8 {
-            versiones.insert((major, minor));
-        }
+ 
+        // BUG FIX: esta línea estaba comentada, el BTreeSet nunca recibía nada
+        versiones.insert((major, minor));
+ 
+        // Si en el futuro quieres filtrar por major, descomenta:
+        // if major >= 8 { versiones.insert((major, minor)); }
     }
-
-    // El BTreeSet ordena matemáticamente (8, 2) antes que (8, 10).
-    // Al convertir a String al final, blindamos el orden visual en Linux.
+ 
+    // BTreeSet ordena (8,1) → (8,2) → (8,10) matemáticamente,
+    // lo que evita el orden lexicográfico incorrecto de los strings
     versiones
         .into_iter()
         .map(|(maj, min)| format!("{}.{}", maj, min))
         .collect()
 }
 
-pub fn install_php() {
-    let config = Settings::load();
-    let versiones_disponibles = get_availables_php(config.admin_mode);
 
-    if versiones_disponibles.is_empty() {
+pub fn install_php() {
+    let versiones = get_availables_php();
+
+
+    //Si no se encuentran php disponibles entra este bloque
+    if versiones.is_empty() {
         println!("Error: No se encontraron versiones de PHP disponibles en tus repositorios de apt.");
         println!("Asegúrate de tener configurado el repositorio de Ondřej Surý.");
         return;
     }
 
-    clear_screen();
+
+    //Imprime el menu para decidir la version de PHP
     print_header("VERSIONES DE PHP DISPONIBLES");
-    for (i, ver) in versiones_disponibles.iter().enumerate() {
+    for (i, ver) in versiones.iter().enumerate() {
         println!("{}) PHP {}", i + 1, ver);
     }
     line();
-    
-    let seleccion_raw = read_in(&format!("Selecciona una opción [1-{}]: ", versiones_disponibles.len()));
-    let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
-
-    if seleccion < 1 || seleccion > versiones_disponibles.len() {
+    let input = read_in(&format!("Selecciona una opción [1-{}]: ", versiones.len()));
+    let seleccion: usize = input.trim().parse().unwrap_or(0);
+    if seleccion < 1 || seleccion > versiones.len() {
         println!("[X] Opción inválida.");
         return;
     }
-
+    let version_php = &versiones[seleccion - 1];
     clear_screen();
+
 
     println!("Actualizando repositorios...");
     update();
 
-    let version_php = &versiones_disponibles[seleccion - 1];
+
     println!("Filtrando módulos compatibles para PHP {}...", version_php);
-
-    let paquetes_raw = &[
-        "common", "cli", "dev", "mysql", "sqlite3", "pgsql", "mongodb", "gd", 
-        "imagick", "exif", "curl", "openssl", "ssl", "sodium", "zip", "bz2", 
-        "xml", "xmlrpc", "soap", "opcache", "memcache", "redis", "intl", 
-        "mbstring", "bcmath", "imap", "pspell", "snmp", "tidy", "mcrypt", 
-        "json", "recode", "pear", "zlib", "fpm"
-    ];
-
-    let mut paquetes_solicitados = paquetes_raw
-    .iter()
-    .map(|sufijo| format!("php{}-{}", version_php, sufijo))
+    let sufijos  = search_json("php_modules.json", "modules");
+    let paquetes_raw: Vec<String> = sufijos
+    .into_iter()
+    .filter(|s| !s.is_empty()) // Filtro de seguridad: ignorar sufijos vacíos
+    .map(|s| format!("php{}-{}", version_php, s))
     .collect();
+    let (packages,_) = findout_software(&paquetes_raw);
 
-    let (_,paquetes_solicitados) = findout_software(paquetes_solicitados);
 
-    let mut paquetes_validos = Vec::new();
-    
-    if let Ok(mut log_file) = OpenOptions::new().create(true).append(true).open(LOG_ERRORES) {
-        for pkg in paquetes_solicitados {
-            // Ejecutamos la consulta de política del paquete
-            let output = Command::new("apt-cache")
-                .args(&["policy", &pkg])
-                .output();
 
-            if let Ok(out) = output {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                
-                // CORRECCIÓN CLAVE: Verificamos que exista la palabra "Candidate:" (lo que confirma que el paquete es real en el repo)
-                // y que NO diga "Candidate: (none)" (lo que indicaría que existe en la base pero no se puede descargar).
-                if stdout.contains("Candidate:") && !stdout.contains("Candidate: (none)") {
-                    paquetes_validos.push(pkg);
-                } else {
-                    let _ = writeln!(log_file, "E: Unable to locate package {}", pkg);
-                    println!("[!] No disponible para esta versión, se omite: {}", pkg);
-                }
-            }
-        }
-    }
-
-    if paquetes_validos.is_empty() {
+    if packages.is_empty() {
         println!("[X] No se encontró ningún paquete válido para instalar.");
         return;
     }
 
-    println!("\nInstalando PHP {} con {} módulos válidos detectados...", version_php, paquetes_validos.len());
 
-    let mut apt_inst = Command::new("apt-get");
-    apt_inst
-        .arg("install")
-        .arg("-y")
-        .args(&paquetes_validos)
+    println!("\nInstalando PHP {} con {} módulos válidos detectados...", version_php, packages.len());
+
+    let mut apt_inst = Command::new("apt-get")
+        .args(&["install", "y"])
+        .args(&packages)
         .stdout(Stdio::null())
-        .stderr(error_log());
-    
-    let nombre_modulo = format!("php{}", version_php);
-    let nombre_fpm = format!("php{}-fpm", version_php);
-    match apt_inst.status() {
-        Ok(status) => {
-            if status.success() {
-                println!("[✓] PHP {} e instalaciones completadas con éxito.", version_php);
-                    if let Ok(enabling) = Command::new("a2dismod").arg(nombre_modulo).stdout(Stdio::null()).status() {
-                        if enabling.success() {
-                            println!("[✓] Se deshabilito php{}.", version_php);
-                            match Command::new("a2enconf").arg(&nombre_fpm).stdout(Stdio::null()).status() {
-                                Ok(conf) if conf.success() => println!("[✓] Se habilito php{}-fpm.", version_php),
-                                _ => println!("[X] Hubo un problema al habilitar php{}-fpm.", version_php),
-                                }
-                            }
-                        } else {
-                            println!("[X] Hubo un problema al deshabilitar php{}.", version_php);
-                        }
-                } else {
-                if Path::new(&format!("/usr/bin/php{}", version_php)).exists() {
-                    println!("[✓] PHP {} base instalado. Módulos no disponibles omitidos (Ver en: {})", version_php, LOG_ERRORES);
-                } else {
-                    println!("[X] Hubo errores críticos durante la instalación. Revisa: {}", LOG_ERRORES);
-                }
-            }
-        }
-        Err(_) => {
-            println!("[X] No se pudo ejecutar el gestor de paquetes apt.");
-        }
+        .stderr(error_log()).status();
+    evaluate(apt_inst);
+
+    configurar_apache_php(version_php);
+}
+
+fn configurar_apache_php(version: &str) {
+    let modulo = format!("php{}", version);
+    let fpm    = format!("php{}-fpm", version);
+
+    let _ = Command::new("a2enmod").arg("proxy_fcgi").arg("proxy").status();
+
+    let _ = Command::new("find").args(["/etc/apache2/conf-enabled/", "-name", "php*-fpm.conf", "-delete"]).status();
+
+    let deshabilitar = Command::new("a2dismod")
+        .arg(&modulo)
+        .stdout(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+ 
+    if !deshabilitar {
+        println!("[X] Error al deshabilitar php{}.", version);
+        return;
+    }
+    println!("[✓] php{} deshabilitado.", version);
+ 
+    let habilitar = Command::new("a2enconf")
+        .arg(&fpm)
+        .stdout(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+ 
+    if habilitar {
+        println!("[✓] php{}-fpm habilitado.", version);
+    } else {
+        println!("[X] Error al habilitar php{}-fpm.", version);
     }
 }
+
 
 pub fn versiones_instaladas_php() -> (bool,Vec<String>) {
     print_header("VERSIONES DE PHP INSTALADAS");

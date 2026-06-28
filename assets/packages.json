@@ -1,5 +1,4 @@
 {
-  "version": "1.0.0",
   "paquetes_base": [
     "software-properties-common",
     "wget",

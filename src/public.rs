@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use rust_embed::RustEmbed;
 use serde_json::Value;
+use std::ffi::OsStr;
 
 
 pub const OK: &str = "[OK]";
@@ -21,7 +22,6 @@ pub const ERROR_YOU: &str = "[X]";
 pub const ERROR_PC: &str = "[ERROR]";
 pub const ARROW: &str = "-->";
 pub const LOG_ERRORES: &str = "/var/log/errores_mantenimiento.log";
-const JSON_EMBEDDED: &str = include_str!("../assets/config.json");
 
 pub fn error_log() -> Stdio {
     //Abre el achivo de log, anade la informacion hasta abajo, lo crea si es necesario y verifica que todo esta bien
@@ -133,7 +133,7 @@ pub fn evaluate_fs<T>(result: io::Result<T>, action: &str, show_logs: bool) -> b
     }
 }
 
-pub fn evaluate(cmd: Result<ExitStatus> ) -> bool {
+pub fn evaluate(cmd: Result<ExitStatus, E> ) -> bool {
     match cmd {
         Ok(status) if status.success() => {
             println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));
@@ -158,9 +158,9 @@ pub fn evaluate(cmd: Result<ExitStatus> ) -> bool {
 }
 
 //Ejecuta un comando con Status de manera silenciosa
-pub fn execute<T: AsRef<str>>(cmd: &str, args: &[T]) -> bool {
+pub fn execute<T: AsRef<OsStr>>(cmd: &str, args: &[T]) -> bool {
     let status = Command::new(cmd)
-        .args(args) // Fix: arg -> args
+        .args(args)           // ← directo, sin Vec intermedio
         .stderr(error_log())
         .stdout(Stdio::null())
         .status();
@@ -298,27 +298,42 @@ impl Settings {
     }
 }
 
-
 #[derive(RustEmbed)]
 #[folder = "assets/"]
 #[include = "*.json"]
+//const CONF2: &str = include_str!("../assets/config2.json");
 struct Assets;
 
 
 pub fn search_json(archivo: &str, clave: &str) -> Vec<String> {
-
+    // 1. Uso de OR lógico ||
     if clave.is_empty() || archivo.is_empty() {
         return Vec::new(); 
     }
 
-    let contenido = Assets::get(archivo)
-        .and_then(|f| String::from_utf8(f.data.to_vec()).ok())
-        .unwrap_or_else(|| panic!("assets/{archivo} no encontrado o no es UTF-8 válido"));
+    // 2. Manejo elegante sin panics
+    let contenido = match Assets::get(archivo) {
+        Some(f) => String::from_utf8(f.data.to_vec()).unwrap_or_default(),
+        None => {
+            eprintln!("[ERROR] Asset '{}' no encontrado.", archivo);
+            return Vec::new();
+        }
+    };
  
-    let json: Value = serde_json::from_str(&contenido)
-        .unwrap_or_else(|e| panic!("JSON inválido en assets/{archivo}: {e}"));
+    // 3. Manejo de JSON corrupto sin panics
+    let json: Value = match serde_json::from_str(&contenido) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[ERROR] JSON corrupto en '{}': {}", archivo, e);
+            return Vec::new();
+        }
+    };
  
-    tovec(&json[clave])
+    // 4. Uso de .get() seguro: si no existe la clave, devuelve un vector vacío
+    match json.get(clave) {
+        Some(val) => tovec(val),
+        None => Vec::new(),
+    }
 }
  
 fn tovec(valor: &Value) -> Vec<String> {

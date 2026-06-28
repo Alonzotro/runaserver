@@ -21,7 +21,7 @@ use crate::mysql::{instalar_phpmyadmin, configurar_mysql_seguro};
 
 use crate::servicios::{upgrade_server, passwd_root, install_needed_software, drivers_needed, permisos, reboot, auto_start,select_language};
 
-use crate::public::{error_log, clear_screen, print_header, read_in, line, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
+use crate::public::{Settings, error_log, clear_screen, print_header, read_in, line, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -34,7 +34,7 @@ fn main() {
 
     //Limpiamos la pantalla para que no se vea los comandos anteriores
     clear_screen();
-
+    //load();
     //Obtenemos la IP para futuros comandos
     let ip = get_ip();
 

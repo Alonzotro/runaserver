@@ -1,13 +1,18 @@
+use mysql::serde::de::value::Error;
 use terminal_size::{Width, terminal_size};
 use rust_i18n::t;
-use std::fs::{OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::process::{Command, Stdio, ExitStatus};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::{result, string, vec};
 use chrono::Local;
+use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use rust_embed::RustEmbed;
+use serde_json::Value;
 
-use crate::evaluate;
 
 pub const OK: &str = "[OK]";
 pub const INFO: &str = "[•]";
@@ -16,7 +21,7 @@ pub const ERROR_YOU: &str = "[X]";
 pub const ERROR_PC: &str = "[ERROR]";
 pub const ARROW: &str = "-->";
 pub const LOG_ERRORES: &str = "/var/log/errores_mantenimiento.log";
-
+const JSON_EMBEDDED: &str = include_str!("../assets/config.json");
 
 pub fn error_log() -> Stdio {
     //Abre el achivo de log, anade la informacion hasta abajo, lo crea si es necesario y verifica que todo esta bien
@@ -104,192 +109,233 @@ macro_rules! read_in {
     }};
 }
 
-pub fn command(command: &str, args: &[&str], result: bool, stdout: Stdio, stderr: Stdio) -> bool {
-    evaluate!(Command::new(command)
-    .args(args)
-    .stdout(stdout)
-    .stderr(stderr).status()
-    , result)
-}
-
-#[macro_export]
-macro_rules! command {
-    // Escenario 1: Solo comando y argumentos (Asume mostrar=true y silenciar stdout)
-    ($cmd:expr, $args:expr) => {
-        $crate::public::command($cmd, $args, true, std::process::Stdio::null(), $crate::public::error_log())
-    };
-    
-    // Escenario 2: Comando, argumentos y si quieres mostrar el log de evaluate!
-    ($cmd:expr, $args:expr, $show:expr) => {
-        $crate::public::command($cmd, $args, $show, std::process::Stdio::null(), $crate::public::error_log())
-    };
-
-    // Escenario 3: Control total (Comando, argumentos, mostrar log, y configuración de Stdio)
-    ($cmd:expr, $args:expr, $show:expr, $stdout:expr) => {
-        $crate::public::command($cmd, $args, $show, $stdout, $crate::public::error_log())
-    };
-
-    ($cmd:expr, $args:expr, $show:expr, $stdout:expr, $stderr:expr) => {
-        $crate::public::command($cmd, $args, $show, $stdout, $stderr)
-    };
-}
-
-pub fn output(command: &str, args: &[&str], result: bool) -> (Option<Output>, bool) {
-    evaluate!(Command::new(command)
-    .args(args)
-    .stderr(error_log())
-    .output()
-    , result)
-}
-
-// 1. Creamos la "interfaz" para que cualquier cosa pueda ser evaluada
-pub trait Evaluable {
-    type Output;
-    fn evaluate(self, show: bool) -> Self::Output;
-}
-
-impl Evaluable for io::Result<Output> {
-    type Output = (Option<Output>, bool);
-    fn evaluate(self, show: bool) -> Self::Output {
-        match self {
-            // 1. Accedemos a la propiedad .status del Output
-            Ok(output) if output.status.success() => {
-                if show { println!("{} {}", OK, rust_i18n::t!("RESULT_OK")); }
-                (Some(output), true)
-                
+// Asumo que `error_log()`, `OK`, `WARNING`, `ERROR_PC` y las macros de
+// rust_i18n ya están definidas en otro módulo de tu proyecto, igual que
+// en tu versión original.
+pub fn evaluate_fs<T>(result: io::Result<T>, action: &str, show_logs: bool) -> bool {
+    match result {
+        Ok(_) => {
+            if show_logs {
+                println!("{} {}: {}", OK, rust_i18n::t!("FS_SUCCESS"), action);
             }
-            Ok(output) => {
-                if show { 
-                    println!("{} {}", WARNING, rust_i18n::t!("RESULT")); 
-                    // 2. Extraemos el código numérico (manejando si fue terminado por una señal con un default)
-                    let code = output.status.code().unwrap_or(-1);
-                    println!("{} {}", rust_i18n::t!("CODE"), code);
-                }
-                (None, false)
+            true
+        }
+        Err(e) => {
+            // ✅ CORRECCIÓN: Enviamos el error directamente a stderr del sistema.
+            // Al ser un error nativo de Rust, no usamos Stdio de procesos.
+            eprintln!("[FS ERR] {}: {}", action, e);
 
+            if show_logs {
+                println!("{} {}: {} -> {}", ERROR_PC, rust_i18n::t!("FS_ERROR"), action, e);
             }
-            Err(e) => {
-                if show { 
-                    println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                    println!("{} {}", rust_i18n::t!("CODE"), e);
-                }
-                (None, false)
-            }
+            false
         }
     }
 }
 
-// 2. Implementación para Comandos de Terminal (ExitStatus)
-impl Evaluable for io::Result<ExitStatus> {
-    type Output = bool;
-    fn evaluate(self, show: bool) -> Self::Output {
-        match self {
-            Ok(status) if status.success() => {
-                if show { println!("{} {}", OK, rust_i18n::t!("RESULT_OK")); }
-                true
-            }
-            Ok(status) => {
-                if show { 
-                    println!("{} {}", WARNING, rust_i18n::t!("RESULT")); 
-                    println!("{} {}", rust_i18n::t!("CODE"), status);
-                }
-                false
-            }
-            Err(e) => {
-                if show { 
-                    println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                    println!("{} {}", rust_i18n::t!("CODE"), e);
-            }
-                false
-            }
+pub fn evaluate(cmd: Result<ExitStatus> ) -> bool {
+    match cmd {
+        Ok(status) if status.success() => {
+            println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));
+            true
         }
-    }
-}
+        Ok(status) => {
+                let code = status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string());
 
-// 3. Implementación para Operaciones de Archivos (fs con tipo vacío '()')
-impl Evaluable for io::Result<()> {
-    type Output = bool;
-    fn evaluate(self, show: bool) -> Self::Output {
-        match self {
-            Ok(_) => {
-                if show { println!("{} {}", OK, rust_i18n::t!("RESULT_OK")); }
-                true
-            }
-            Err(e) => {
-                if show { 
-                    println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                    println!("{} {}", rust_i18n::t!("CODE"), e);
-                }
-                false
-            }
-        }
-    }
-}
-
-// 5. Implementación para operaciones que devuelven un conteo numérico (como fs::copy)
-impl Evaluable for io::Result<u64> {
-    type Output = bool;
-    fn evaluate(self, show: bool) -> Self::Output {
-        match self {
-            Ok(_) => { // Ignoramos el número de bytes, solo nos importa que fue Ok
-                if show { println!("{} {}", OK, rust_i18n::t!("RESULT_OK")); }
-                true
-            }
-            Err(e) => {
-                if show { 
-                    println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                    println!("{} {}", rust_i18n::t!("CODE"), e);
-                }
-                false
-            }
-        }
-    }
-}
-
-impl Evaluable for io::Result<PathBuf> {
-    type Output = Option<PathBuf>; // <-- Si sale bien te da la ruta, si falla te da None
-    fn evaluate(self, show: bool) -> Self::Output {
-        match self {
-            Ok(path) => {
-                if show { println!("{} {}", OK, rust_i18n::t!("RESULT_OK")); }
-                Some(path) // <-- Aquí te entrego tu ruta vivita y coleando
-            }
-            Err(e) => {
-                if show { 
-                    println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                    println!("{} {}", rust_i18n::t!("CODE"), e);
-                }
-                None // <-- Te regreso un None para avisar que falló
-            }
-        }
-    }
-}
-
-impl Evaluable for bool {
-    type Output = bool;
-    fn evaluate(self, show: bool) -> Self::Output {
-        if show {
-            if self {
-                println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));
-            } else {
                 println!("{} {}", WARNING, rust_i18n::t!("RESULT"));
-            }
+                println!("{} {}", rust_i18n::t!("CODE"), code);
+            false
         }
-        self
+        Err(e) => {
+                println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
+                println!("{} {}", rust_i18n::t!("ERROR_CAUSE"), e);
+            false
+        }
     }
 }
 
-#[macro_export]
-macro_rules! evaluate {
-    // Si no le pasas segundo argumento, por defecto asume true (mostrar)
-    ($resultado:expr) => {
-        $resultado.evaluate(true)
-    };
-    // Si le pasas un booleano, usa ese booleano
-    ($resultado:expr, $show:expr) => {
-        $resultado.evaluate($show)
-    };
+//Ejecuta un comando con Status de manera silenciosa
+pub fn execute<T: AsRef<str>>(cmd: &str, args: &[T]) -> bool {
+    let status = Command::new(cmd)
+        .args(args) // Fix: arg -> args
+        .stderr(error_log())
+        .stdout(Stdio::null())
+        .status();
+    evaluate(status)
+}
+
+//Ejecuta un comando con Output de manera silenciosa
+pub fn output<T: AsRef<str>>(cmd: &str, args: &[T]) -> (String, bool, Result<(), io::Error>) {
+    let status = Command::new(cmd).args(args).output();
+    match status {
+        Ok(out) if out.status.success() => {
+            let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
+            (stdout_text, true, Ok(()))
+        }
+        Ok(out) => {
+            let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr_text = String::from_utf8_lossy(&out.stderr);
+            
+            // Armamos el mensaje aquí arriba teniendo acceso limpio a 'out'
+            let log_msg = format!(
+                "[ERROR] Comando fallido con código ({}).\nDetalle: {}", 
+                out.status, 
+                stderr_text.trim()
+            );
+            write_error(&log_msg);
+            (stdout_text, false, Ok(()))
+        }
+        Err(e) => {
+            let log_msg = format!("[CRITICAL ERR] Fallo al lanzar el binario '{}': {}", cmd, e);
+            write_error(&log_msg);
+            (String::new(), false, Err(e))
+        }
+    }
+}
+
+fn write_error(mensaje: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(LOG_ERRORES)
+    {
+        // FIX 2: timestamp añadido
+        let ts = Local::now().format("[%Y-%m-%d %H:%M:%S]");
+        let _ = writeln!(file, "{} {}\n---", ts, mensaje);
+    }
+}
+
+pub fn findout_software(programas: &[String]) -> (Vec<String>, Vec<String>) {
+    if programas.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let instalados: Vec<String> = Command::new("dpkg-query")
+        .args(["-W", "-f=${Package}\n"])
+        .args(programas)
+        .stderr(Stdio::null())
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+ 
+    let instalados_set: HashSet<&str> = instalados.iter().map(String::as_str).collect();
+ 
+    let faltantes: Vec<String> = programas
+        .iter()
+        .filter(|p| !instalados_set.contains(p.as_str()))
+        .cloned()
+        .collect();
+ 
+    (faltantes, instalados)
+}
+
+pub fn install_packages(packages_raw: &[String]) -> Vec<String> {
+    let (mut to_install, _) = findout_software(packages_raw);
+
+    // Si no falta nada, devolvemos un vector vacío al instante
+    if to_install.is_empty() {
+        return Vec::new();
+    }
+
+    // 1. Creamos la base directamente como String
+    let mut args = vec!["install".to_string(), "-y".to_string()];
+
+    // 2. FUSIONAMOS: Mueve los elementos de 'to_install' dentro de 'args'
+    args.append(&mut to_install);
+
+    args // Retorno implícito (sin punto y coma)
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Settings {
+    pub admin_mode: bool,
+    //pub server_name: String,
+}
+
+impl Settings {
+    const FILE_PATH: &'static str = "settings.toml";
+
+    // 2. Función para cargar (si no existe, crea uno por defecto)
+    pub fn load() -> Self {
+        if !Path::new(Self::FILE_PATH).exists() {
+            let default_settings = Settings {
+                admin_mode: false,
+                //server_name: String::from("Mi Servidor Rust"),
+            };
+            default_settings.save();
+            return default_settings;
+        }
+
+        let contenido = fs::read_to_string(Self::FILE_PATH)
+            .expect("No se pudo leer el archivo de configuración");
+        
+        toml::from_str(&contenido)
+            .expect("Formato TOML inválido")
+    }
+
+    // 3. Función para guardar los cambios en el disco
+    pub fn save(&self) {
+        let toml_string = toml::to_string_pretty(self)
+            .expect("No se pudo serializar a TOML");
+        fs::write(Self::FILE_PATH, toml_string)
+            .expect("No se pudo escribir el archivo en disco");
+    }
+
+    // 4. Función específica para modificar el Admin Mode
+    pub fn set_admin_mode(&mut self, mode: bool) {
+        self.admin_mode = mode;
+        self.save(); // Guarda automáticamente en el archivo cada vez que cambia
+    }
 }
 
 
+#[derive(RustEmbed)]
+#[folder = "assets/"]
+#[include = "*.json"]
+struct Assets;
+
+
+pub fn search_json(archivo: &str, clave: &str) -> Vec<String> {
+
+    if clave.is_empty() || archivo.is_empty() {
+        return Vec::new(); 
+    }
+
+    let contenido = Assets::get(archivo)
+        .and_then(|f| String::from_utf8(f.data.to_vec()).ok())
+        .unwrap_or_else(|| panic!("assets/{archivo} no encontrado o no es UTF-8 válido"));
+ 
+    let json: Value = serde_json::from_str(&contenido)
+        .unwrap_or_else(|e| panic!("JSON inválido en assets/{archivo}: {e}"));
+ 
+    tovec(&json[clave])
+}
+ 
+fn tovec(valor: &Value) -> Vec<String> {
+    match valor {
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                Value::Bool(b)   => Some(b.to_string()),
+                _                => None,
+            })
+            .collect(),
+        Value::String(s) => vec![s.clone()],
+        Value::Number(n) => vec![n.to_string()],
+        Value::Bool(b)   => vec![b.to_string()],
+        _                => vec![],   // Null o clave inexistente
+    }
+}
 

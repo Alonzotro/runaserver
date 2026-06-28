@@ -1,28 +1,32 @@
 // ==========================================
 // SERVICIOS PRINCIPALES
 // ==========================================
-use crate::{evaluate, read_in, command};
-use crate::public::{error_log, clear_screen, print_header, line, command, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
+use crate::{read_in};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, execute, findout_software, install_packages, line, print_header, search_json};
 use std::fs::{self, OpenOptions};
 use std::env;
+use std::future::Ready;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
-//use rust_i18n::t;
+use std::io::ErrorKind;
+use std::os::unix::fs::PermissionsExt;
+use serde::{Deserialize, Serialize};
+
+pub const TARGET_BIN: &str = "/usr/local/bin/runaserver-bin";
+pub const TARGET_WRAPPER: &str = "/usr/local/bin/runaserver";
 
 
-fn update() {
+pub fn update() {
     println!("{} {}",INFO, rust_i18n::t!("UPDATING"));
-    let status = command!("apt-get", &["update"], true);
-    if !status {
+    if !execute("apt-get", &["update"]) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_UPDATING"));
     }
 }
 
 fn upgrade() {
     println!("{} {}",INFO, rust_i18n::t!("UPGRADING"));
-    let status = command!("apt-get", &["upgrade"], true);
-    if !status {
+    if !execute("apt-get", &["upgrade", "-y"]) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_UPGRADING"));
     }
 }
@@ -58,53 +62,64 @@ pub fn upgrade_server() {
     upgrade();
 
     println!("{} {}",INFO, rust_i18n::t!("DELETE_PKG_OBS"));
-    let status = command!("apt-get", &["autoremove", "-y"], true);
-    if !status {
+    if !execute("apt-get", &["autoremove", "-y"]) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_DELETE_PKG_OBS"));
     }
 
     println!("{} {}",INFO, rust_i18n::t!("clear_CACHE"));
-    let status = command!("apt-get", &["autoclean", "-y"], true);
-    if !status {
+    if !execute("apt-get", &["autoclean", "-y"]) {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_clear_CACHE"));
     }
 }
 
 pub fn passwd_root() {
     println!("{} {}", INFO, rust_i18n::t!("CHANGE_PASSWD"));
-    command!("passwd", &["root"], true, Stdio::inherit());
+    let status = Command::new("passwd").arg("root").stderr(error_log()).status();
+    evaluate(status);
 }
 
 pub fn install_needed_software() {
     update();
 
     //Instala los paquetes necesarios
-    println!("{} {}", INFO, rust_i18n::t!("INSTALL_NECESSARY"));
-    let status = command!("apt-get", &["install", "-y", "software-properties-common", "wget", "tar", "libncurses6", "libnuma1", "openssl", "net-tools", "ufw", "ca-certificates", "apt-transport-https"], true);
-    if !status {
-        println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
+    println!("{INFO} {}", rust_i18n::t!("INSTALL_NECESSARY"));
+
+    let packages_raw = search_json("packages.json", "paquetes_base");
+    let (packages,_) = findout_software(&packages_raw);
+
+    if !packages.is_empty() {
+        let status= Command::new("apt-get")
+        .args(&["install", "-y"])
+        .args(&packages)
+        .stderr(error_log())
+        .stdout(Stdio::null())
+        .status();
+
+        if evaluate(status) {
+            println!("{OK} {}", "Exito");
+        } else {
+            println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
+            return;
+        }
     }
 
     println!("[1/2] {} {}", INFO, rust_i18n::t!("ADD_REPOSITORY_PHP"));
-    let status = command!("add-apt-repository", &["ppa:ondrej/php", "-y"], true);
-    if !status {
+    if execute("add-apt-repository", &["ppa:ondrej/php", "-y"]) {
+
+    } else {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_ADD_REPOSITORY_PHP"));
+        return;
     }
 
     println!("[2/2] {} {}", INFO, rust_i18n::t!("ADD_REPOSITORY_APACHE"));
-    let status = command!("add-apt-repository", &["ppa:ondrej/apache2", "-y"], true);
-    if !status {
+    if execute("add-apt-repository", &["ppa:ondrej/apache2", "-y"]) {
+
+    } else {
         println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_ADD_REPOSITORY_APACHE"));
+        return;
     }
 
     update();
-
-    //Instala programas necesarios
-    println!("{} {} (Apache, MySQL, etc)...",INFO, rust_i18n::t!("INSTALL_ESSENTIAL"));;
-    let status = command!("apt-get", &["install", "-y", "apache2", "apache2-suexec-pristine", "apache2-suexec-custom", "libapache2-mod-fcgid", "mysql-server", "mysql-client"], true);
-    if !status {
-        println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
-    }
 
     upgrade();
 }
@@ -118,52 +133,50 @@ pub fn drivers_needed() {
     println!("[3] {}", rust_i18n::t!("NO_VM"));
     line();
     let vm = read_in!("{} [1-3]: ", rust_i18n::t!("SELECT_OPTION"));
-    
-    let opcion = vm.trim();
 
+    let vm_trimmed = vm.trim();
+    let seleccion: u32 = vm_trimmed.parse().unwrap_or(0);
+    if !matches!(seleccion, 1..=3) {
+        return;
+    }
+
+    clear_screen();
+    println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
+    update();
     // 2. Ejecutamos el match y recolectamos el status de forma limpia
-    match opcion {
-        "1" => {
-            clear_screen();
-            println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
-            update();
-
-            let status = command!("apt-get", &["install", "-y", "build-essential", "dkms", "virtualbox-guest-x11", "virtualbox-guest-utils"], true);
-            if !status {
-                println!("{} Error al instalar los drivers necesarios", ERROR_PC);
-            }
+    let list = match seleccion {
+        1 => {
             println!("{}", rust_i18n::t!("RECOMMENDED_VIRTUALBOX"));
+            "pkg_virtualbox"
         }
-        "2" => {
-            clear_screen();
-            println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
-            update();
-
-            let status = command!("apt-get", &["install", "-y", "open-vm-tools", "open-vm-tools-desktop"], true);
-            if !status {
-                println!("{} Error al instalar los drivers necesarios", ERROR_PC);
-            }
+        2 => {
+            "pkg_vmware"
         }
-        "3" => {
-            clear_screen();
-            println!("{}", rust_i18n::t!("INSTALLING_DRIVERS"));
-            update();
-
-            let status = command!("apt-get", &["install", "-y", "linux-headers-generic", "firmware-linux-free"], true);
-            if !status {
-                println!("{} Error al instalar los drivers necesarios", ERROR_PC);
-            }
+        3 => {
+            upgrade_server();
+            "pkg_no_vm"
         }
-        _ => { //unreachable!(),
-            println!("{} {}",ERROR_YOU,rust_i18n::t!("BAD_SELECTED"));
+        _ => {
+            unreachable!();
         }
     };
 
+    let packages_raw = search_json("packages.json", &list);
+    let(packages, _) = findout_software(&packages_raw);
+    let status = Command::new("apt-get")
+        .args(["install", "-y"])
+        .args(packages)
+        .stderr(error_log())
+        .stdout(Stdio::null())
+        .status();
+    if !evaluate(status) {
+        println!("{} Error al instalar los drivers necesarios", ERROR_PC);
+    }
 }
 
 pub fn permisos() {
     println!("{} {}",INFO,rust_i18n::t!("CHANGING_PERMISSION"));
-    command!("chown", &["-R", "www-data:www-data", "/var/www"], true, Stdio::inherit());
+    execute("chown",&["-R", "www-data:www-data", "/var/www"]);
 }
 
 pub fn reboot() {
@@ -180,7 +193,7 @@ pub fn reboot() {
             
             // Ejecutamos el comando de reinicio nativo de Linux
             let status = Command::new("reboot").status();
-            if !evaluate!(status, true) {
+            if evaluate(status) {
                 std::process::exit(0);
             }
         }
@@ -193,79 +206,60 @@ pub fn reboot() {
 pub fn auto_start() {
     print_header(&rust_i18n::t!("CONFIG_AUTO_START_TITLE"));
 
-    // 1. Obtener la ruta exacta del ejecutable actual
     println!("{}", rust_i18n::t!("GETTING_CURRENT_PATH"));
-    let Some(exe_path) = evaluate!(env::current_exe(), false) else { return; };
-
-    let target_bin = "/usr/local/bin/runaserver-bin";
-    let target_wrapper = "/usr/local/bin/runaserver";
-
-    // 2. DETECCIÓN Y BORRADO FORZADO:
-    if Path::new(target_bin).exists() {
-        println!("{} {}", WARNING, rust_i18n::t!("PREVIOUS_VERSION_DETECTED", path = target_bin));
-        println!("{} {}", WARNING, rust_i18n::t!("DELETING_OLD_FILE"));
-        
-        if !evaluate!(fs::remove_file(target_bin), false) {
-            println!("{} {}", ERROR_PC, rust_i18n::t!("COULD_NOT_DELETE_OLD"));
-            println!("{}", rust_i18n::t!("TRYING_TO_CONTINUE"));
+    let exe_path = match env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            println!("{} [CRITICAL] Imposible resolver la ruta del binario: {}", ERROR_PC, e);
+            return;
         }
+    };
+
+    // 1. BORRADO IDIOMÁTICO (Cero TOCTOU)
+    match fs::remove_file(TARGET_BIN) {
+        Ok(_) => {
+            println!("{} {}", WARNING, rust_i18n::t!("PREVIOUS_VERSION_DETECTED", path = TARGET_BIN));
+            println!("{} {}", WARNING, rust_i18n::t!("DELETING_OLD_FILE"));
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => { /* No existía, perfecto */ }
+        Err(e) => println!("{} Aviso: No se pudo limpiar el binario previo: {}", WARNING, e),
     }
 
-    // 3. COPIA LIMPIA DEL BINARIO REAL:
+    // 2. COPIA LIMPIA
     println!("{}", rust_i18n::t!("COPYING_NEW_VERSION"));
-    if !evaluate!(fs::copy(&exe_path, target_bin), false) {
+    if let Err(e) = fs::copy(&exe_path, TARGET_BIN) {
+        println!("{} Fallo crítico copiando el binario: {}", ERROR_PC, e);
         return;
     }
 
+    // 3. PERMISOS NATIVOS 0o755 (rwxr-xr-x) -> ¡¡Sin invocar a Bash!!
     println!("{}", rust_i18n::t!("SETTING_BIN_PERMISSIONS"));
-    evaluate!(Command::new("chmod").args(&["+x", target_bin]).status(), false);
+    let modo_755 = fs::Permissions::from_mode(0o755);
+    if let Err(e) = fs::set_permissions(TARGET_BIN, modo_755.clone()) {
+        println!("{} Error aplicando permisos de ejecución: {}", ERROR_PC, e);
+        return;
+    }
 
-    // 4. CREACIÓN DEL WRAPPER SCRIPT (Magia de pkexec):
+    // 4. CREACIÓN DEL WRAPPER (Optimizado con 'exec' y sh POSIX)
     println!("{}", rust_i18n::t!("CONFIGURING_PRIVILEGE_ELEVATION"));
     
     let wrapper_content = format!(
-        "#!/bin/bash\n\
+        "#!/bin/sh\n\
         if [ \"$EUID\" -eq 0 ]; then\n\
-        \t{} \"$@\"\n\
+        \texec \"{}\" \"$@\"\n\
         else\n\
-        \tpkexec {} \"$@\"\n\
+        \texec pkexec \"{}\" \"$@\"\n\
         fi\n",
-        target_bin, target_bin
+        TARGET_BIN, TARGET_BIN
     );
 
-    if !evaluate!(fs::write(target_wrapper, wrapper_content), true) {
+    if let Err(e) = fs::write(TARGET_WRAPPER, wrapper_content) {
+        println!("{} No se pudo escribir el wrapper en /usr/local/bin: {}", ERROR_PC, e);
         return;
     }
 
     println!("{}", rust_i18n::t!("SETTING_WRAPPER_PERMISSIONS"));
-    evaluate!(Command::new("chmod").args(&["+x", target_wrapper]).status(), false);
+    let _ = fs::set_permissions(TARGET_WRAPPER, modo_755);
 
     println!("{} {}", OK, rust_i18n::t!("UPDATE_COMPLETE_PKEXEC"));
-
-    // 5. VERIFICACIÓN DEL BASHRC:
-    let bashrc_path = "/root/.bashrc";
-    
-    println!("{}", rust_i18n::t!("VERIFYING_BASHRC"));
-    if let Ok(contenido) = fs::read_to_string(bashrc_path) {
-        if contenido.contains(target_wrapper) {
-            println!("{} {}", OK, rust_i18n::t!("BASHRC_ALREADY_LINKED"));
-            return;
-        }
-    }
-
-    // Si no existía en el .bashrc, añadimos la línea al final
-    println!("{}", rust_i18n::t!("ADDING_TO_BASHRC"));
-    match OpenOptions::new().append(true).open(bashrc_path) {
-        Ok(mut file) => {
-            let linea_arranque = format!("\n# Iniciar gestor de servidor automáticamente\n{}\n", target_wrapper);
-            if let Err(e) = file.write_all(linea_arranque.as_bytes()) {
-                println!("[X] {}", rust_i18n::t!("BASHRC_WRITE_ERROR", error = e));
-            } else {
-                println!("{} {}", OK, rust_i18n::t!("INITIAL_BOOT_CONFIG_SUCCESS"));
-            }
-        }
-        Err(e) => {
-            println!("[X] {}", rust_i18n::t!("BASHRC_OPEN_ERROR", path = bashrc_path, error = e));
-        }
-    }
 }

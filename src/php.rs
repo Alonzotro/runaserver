@@ -1,8 +1,8 @@
 // ==========================================
 // PHP MANAGEMENT
 // ==========================================
-use crate::evaluate;
-use crate::public::{error_log, clear_screen, print_header, read_in, line, command, Evaluable, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, Settings, WARNING, clear_screen, error_log, evaluate, findout_software, line, output, print_header, read_in};
+use crate::servicios::{update};
 use std::fs::{self, OpenOptions};
 use std::io::{Write};
 use std::path::Path;
@@ -10,89 +10,78 @@ use std::process::{Command, Stdio};
 use std::collections::BTreeSet;
 
 //No visual
-fn get_availables_php() -> Vec<String> {
-    // 1. Usamos .output() para capturar el texto.
-    // Tu macro evaluate! lo procesará y te devolverá un Option<Output>
-    let resultado_output = evaluate!(
-        Command::new("apt-cache")
-            .args(&["policy", "php[0-9].*"])
-            .output(),
-        true
-    );
+/// Consulta en apt-cache los paquetes PHP disponibles en los repositorios
+pub fn get_availables_php(solo_php8: bool) -> Vec<String> {
+    let (stdout, exito, _) = output("apt-cache", &["pkgnames", "php"]);
+    if !exito {
+        return Vec::new();
+    }
+    
+    extract_and_sort_versions(&stdout, solo_php8)
+}
 
-    let mut versiones = BTreeSet::new();
+/// Consulta en dpkg la base de datos real de paquetes PHP instalados
+pub fn get_installed_php() -> Vec<String> {
+    // -W: Muestra registros | -f='${Package}\n': Solo el nombre crudo de instalados
+    let (stdout, exito, _) = output("dpkg-query", &["-W", "-f=${Package}\n", "php*"]);
+    if !exito {
+        return Vec::new();
+    }
 
-    // 2. Si evaluate! determinó que el comando fue Ok, extraemos el Output
-    if let Some(out) = resultado_output {
-        let stdout_str = String::from_utf8_lossy(&out.stdout);
+    extract_and_sort_versions(&stdout, false)
+}
+
+// =====================================================================
+// MOTOR DE PARSEO ESTRICTO (Cero duplicación de código)
+// =====================================================================
+
+#[inline]
+fn extract_and_sort_versions(raw_text: &str, solo_php8: bool) -> Vec<String> {
+    let mut versiones: BTreeSet<(u32, u32)> = BTreeSet::new();
+
+    for linea in raw_text.lines() {
+        let pkg = linea.trim();
+
+        // 1. Debe empezar por "php" seguido de un número (Descarta phpmyadmin, phpunit...)
+        let Some(resto) = pkg.strip_prefix("php") else { continue };
+        if !resto.starts_with(|c: char| c.is_ascii_digit()) {
+            continue;
+        }
+
+        // 2. Tomamos bytes de dígitos y el punto principal (ej: "8.1-cli" -> "8.1")
+        let version_str: String = resto
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+
+        // 3. Corte exacto en el primer punto
+        let Some((major_str, minor_str)) = version_str.split_once('.') else {
+            continue;
+        };
+
+        // 4. Transformación segura a enteros (Protege contra "8." o "8.1.0")
+        let minor_clean: String = minor_str.chars().take_while(|c| c.is_ascii_digit()).collect();
         
-        for line in stdout_str.lines() {
-            // Simula: grep -oE '^php[0-9]\.[0-9]'
-            if line.starts_with("php") && line.len() >= 6 {
-                let posible_version = &line[3..];
+        let (Ok(major), Ok(minor)) = (major_str.parse::<u32>(), minor_clean.parse::<u32>()) else {
+            continue;
+        };
 
-                // Simula el segundo grep (solo números y puntos)
-                let version_filtrada: String = posible_version
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit() || *c == '.')
-                    .collect();
-
-                // Separamos "8.1" en ["8", "1"]
-                let partes: Vec<&str> = version_filtrada.split('.').collect();
-                if partes.len() >= 2 {
-                    // Simula 'sort -uV': El BTreeSet ordena numéricamente y elimina duplicados
-                    if let (Ok(major), Ok(minor)) = (partes[0].parse::<u32>(), partes[1].parse::<u32>()) {
-                        versiones.insert((major, minor));
-                    }
-                }
-            }
+        if !solo_php8 || major >= 8 {
+            versiones.insert((major, minor));
         }
     }
 
-    // 3. Convertimos las tuplas (8, 1) de vuelta a "8.1"
-    versiones.into_iter()
-        .map(|(major, minor)| format!("{}.{}", major, minor))
+    // El BTreeSet ordena matemáticamente (8, 2) antes que (8, 10).
+    // Al convertir a String al final, blindamos el orden visual en Linux.
+    versiones
+        .into_iter()
+        .map(|(maj, min)| format!("{}.{}", maj, min))
         .collect()
 }
 
-//No visual
-fn get_installed_php() -> Vec<String> {
-    let mut versiones = Vec::new();
-    
-    // Leemos el directorio /usr/bin de forma nativa
-    if let Ok(entries) = fs::read_dir("/usr/bin") {
-        for entry in entries.flatten() {
-            if let Ok(file_name) = entry.file_name().into_string() {
-                // Buscamos archivos que empiecen con "php" (ej. php8.1, php8.2)
-                if file_name.starts_with("php") && file_name.len() > 3 {
-                    let resto = &file_name[3..];
-                    
-                    // Nos aseguramos de que lo que sigue sea un número (para ignorar php-config, phpize, etc.)
-                    if resto.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-                        // Extraemos solo los números y puntos (por si hay cosas como php8.2-cgi)
-                        let version: String = resto
-                            .chars()
-                            .take_while(|c| c.is_ascii_digit() || *c == '.')
-                            .collect();
-                        
-                        if version.contains('.') {
-                            versiones.push(version);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Ordenamos y eliminamos duplicados (el equivalente a | sort -u)
-    versiones.sort();
-    versiones.dedup();
-    
-    versiones
-}
-
 pub fn install_php() {
-    let versiones_disponibles = get_availables_php();
+    let config = Settings::load();
+    let versiones_disponibles = get_availables_php(config.admin_mode);
 
     if versiones_disponibles.is_empty() {
         println!("Error: No se encontraron versiones de PHP disponibles en tus repositorios de apt.");
@@ -118,52 +107,25 @@ pub fn install_php() {
     clear_screen();
 
     println!("Actualizando repositorios...");
-    let _ = Command::new("apt-get").args(&["update"]).stdout(Stdio::null()).stderr(error_log()).status();
-    let _ = Command::new("apt-get").args(&["upgrade", "-y"]).stdout(Stdio::null()).stderr(error_log()).status();
+    update();
 
     let version_php = &versiones_disponibles[seleccion - 1];
     println!("Filtrando módulos compatibles para PHP {}...", version_php);
 
-    let paquetes_solicitados = vec![
-        format!("libapache2-mod-php{}", version_php),
-        format!("php{}-common", version_php),
-        format!("php{}-cli", version_php),
-        format!("php{}-dev", version_php),
-        format!("php{}-mysql", version_php),
-        format!("php{}-sqlite3", version_php),
-        format!("php{}-pgsql", version_php),
-        format!("php{}-mongodb", version_php),
-        format!("php{}-gd", version_php),
-        format!("php{}-imagick", version_php),
-        format!("php{}-exif", version_php),
-        format!("php{}-curl", version_php),
-        format!("php{}-openssl", version_php),
-        format!("php{}-ssl", version_php),
-        format!("php{}-sodium", version_php),
-        format!("php{}-zip", version_php),
-        format!("php{}-bz2", version_php),
-        format!("php{}-xml", version_php),
-        format!("php{}-xmlrpc", version_php),
-        format!("php{}-soap", version_php),
-        format!("php{}-opcache", version_php),
-        format!("php{}-memcache", version_php),
-        format!("php{}-redis", version_php),
-        format!("php{}-intl", version_php),
-        format!("php{}-mbstring", version_php),
-        format!("php{}-bcmath", version_php),
-        format!("php{}-imap", version_php),
-        format!("php{}-pspell", version_php),
-        format!("php{}-snmp", version_php),
-        format!("php{}-tidy", version_php),
-        format!("php{}-mcrypt", version_php),
-        format!("php{}-json", version_php),
-        format!("php{}-recode", version_php),
-        format!("php{}-pear", version_php),
-        format!("php-pear"),
-        format!("php{}-zlib", version_php),
-        format!("php{}-fpm", version_php),
-
+    let paquetes_raw = &[
+        "common", "cli", "dev", "mysql", "sqlite3", "pgsql", "mongodb", "gd", 
+        "imagick", "exif", "curl", "openssl", "ssl", "sodium", "zip", "bz2", 
+        "xml", "xmlrpc", "soap", "opcache", "memcache", "redis", "intl", 
+        "mbstring", "bcmath", "imap", "pspell", "snmp", "tidy", "mcrypt", 
+        "json", "recode", "pear", "zlib", "fpm"
     ];
+
+    let mut paquetes_solicitados = paquetes_raw
+    .iter()
+    .map(|sufijo| format!("php{}-{}", version_php, sufijo))
+    .collect();
+
+    let (_,paquetes_solicitados) = findout_software(paquetes_solicitados);
 
     let mut paquetes_validos = Vec::new();
     

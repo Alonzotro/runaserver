@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "paquetes_base": [
+    "software-properties-common",
+    "wget",
+    "tar",
+    "libncurses6",
+    "libnuma1",
+    "openssl",
+    "net-tools",
+    "ufw",
+    "ca-certificates",
+    "apt-transport-https",
+    "bleachbit",
+    "apache2",
+    "apache2-suexec-pristine",
+    "apache2-suexec-custom",
+    "libapache2-mod-fcgid",
+    "mysql-server",
+    "mysql-client"
+  ],
+  "pkg_virtualbox": [
+    "open-vm-tools",
+    "open-vm-tools-desktop"
+  ],
+  "pkg_vmware": [
+    "build-essential",
+    "dkms",
+    "virtualbox-guest-x11",
+    "virtualbox-guest-utils"
+  ],
+  "pkg_no_vm": [
+    "linux-headers-generic", 
+    "firmware-linux-free"
+  ]
+}

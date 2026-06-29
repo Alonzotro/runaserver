@@ -1,7 +1,8 @@
 // ==========================================
 // PHP MANAGEMENT
 // ==========================================
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, Settings, WARNING, clear_screen, error_log, evaluate, findout_software, line, output, print_header, read_in, search_json};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, Settings, WARNING, clear_screen, error_log, evaluate, findout_software, line, list_version, output, print_header, read_in, search_json, valid_input};
+use crate::apache::{restart_apache};
 use crate::servicios::{update};
 use std::fs::{self, OpenOptions};
 use std::io::{Write};
@@ -11,76 +12,15 @@ use std::collections::BTreeSet;
 
 //No visual
 /// Consulta en apt-cache los paquetes PHP disponibles en los repositorios
-pub fn get_availables_php() -> Vec<String> {
-    let (stdout, exito, _) = output("apt-cache", &["pkgnames", "php"]);
-    if !exito {
-        return Vec::new();
-    }
-    
-    extract_and_sort_versions(&stdout)
+use crate::data::{sort_versions, search_module, get_installable_php, get_installed_php_fpm, get_installed_php};
+
+pub fn versiones_instaladas_php() {
+    let ver = get_installed_php();
+    list_version(&ver);
 }
-
-/// Consulta en dpkg la base de datos real de paquetes PHP instalados
-pub fn get_installed_php() -> Vec<String> {
-    // -W: Muestra registros | -f='${Package}\n': Solo el nombre crudo de instalados
-    let (stdout, exito, _) = output("dpkg-query", &["-W", "-f=${Package}\n", "php*"]);
-    if !exito {
-        return Vec::new();
-    }
-
-    extract_and_sort_versions(&stdout)
-}
-
-
-fn extract_and_sort_versions(raw_text: &str) -> Vec<String> {
-    let mut versiones: BTreeSet<(u32, u32)> = BTreeSet::new();
- 
-    for linea in raw_text.lines() {
-        let pkg = linea.trim();
- 
-        // 1. Debe empezar por "php" seguido de un número
-        //    (descarta phpmyadmin, phpunit, libphp...)
-        let Some(resto) = pkg.strip_prefix("php") else { continue };
-        if !resto.starts_with(|c: char| c.is_ascii_digit()) { continue }
- 
-        // 2. Extraemos solo la parte numérica con punto ("8.1-cli" → "8.1")
-        let version_str: String = resto
-            .chars()
-            .take_while(|c| c.is_ascii_digit() || *c == '.')
-            .collect();
- 
-        // 3. Separamos en major y minor
-        let Some((major_str, minor_str)) = version_str.split_once('.') else { continue };
- 
-        // 4. minor_str puede ser "1" o "10-algo" → tomamos solo los dígitos
-        let minor_clean: String = minor_str
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
- 
-        // 5. Parseo seguro — descarta "8." o cualquier forma inválida
-        let (Ok(major), Ok(minor)) = (major_str.parse::<u32>(), minor_clean.parse::<u32>()) else {
-            continue;
-        };
- 
-        // BUG FIX: esta línea estaba comentada, el BTreeSet nunca recibía nada
-        versiones.insert((major, minor));
- 
-        // Si en el futuro quieres filtrar por major, descomenta:
-        // if major >= 8 { versiones.insert((major, minor)); }
-    }
- 
-    // BTreeSet ordena (8,1) → (8,2) → (8,10) matemáticamente,
-    // lo que evita el orden lexicográfico incorrecto de los strings
-    versiones
-        .into_iter()
-        .map(|(maj, min)| format!("{}.{}", maj, min))
-        .collect()
-}
-
 
 pub fn install_php() {
-    let versiones = get_availables_php();
+    let versiones = get_installable_php();
 
 
     //Si no se encuentran php disponibles entra este bloque
@@ -93,11 +33,14 @@ pub fn install_php() {
 
     //Imprime el menu para decidir la version de PHP
     print_header("VERSIONES DE PHP DISPONIBLES");
-    for (i, ver) in versiones.iter().enumerate() {
-        println!("{}) PHP {}", i + 1, ver);
+    list_version(&versiones);
+    let len = versiones.len();
+    let input = read_in(&format!("Selecciona una opción [1-{}]: ", len));
+    
+    if valid_input(input, len) == false {
+        return;
     }
-    line();
-    let input = read_in(&format!("Selecciona una opción [1-{}]: ", versiones.len()));
+
     let seleccion: usize = input.trim().parse().unwrap_or(0);
     if seleccion < 1 || seleccion > versiones.len() {
         println!("[X] Opción inválida.");
@@ -137,61 +80,32 @@ pub fn install_php() {
         .stderr(error_log()).status();
     evaluate(apt_inst);
 
-    configurar_apache_php(version_php);
+
+    disable_all_fpm_apache();
 }
 
-fn configurar_apache_php(version: &str) {
-    let modulo = format!("php{}", version);
-    let fpm    = format!("php{}-fpm", version);
+fn disable_all_fpm_apache() {
+    // 1. Aseguramos que Apache tenga el proxy cargado (necesario siempre)
+    let _ = Command::new("a2enmod").args(["proxy_fcgi", "proxy"]).status();
 
-    let _ = Command::new("a2enmod").arg("proxy_fcgi").arg("proxy").status();
-
-    let _ = Command::new("find").args(["/etc/apache2/conf-enabled/", "-name", "php*-fpm.conf", "-delete"]).status();
-
-    let deshabilitar = Command::new("a2dismod")
-        .arg(&modulo)
-        .stdout(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
- 
-    if !deshabilitar {
-        println!("[X] Error al deshabilitar php{}.", version);
-        return;
-    }
-    println!("[✓] php{} deshabilitado.", version);
- 
-    let habilitar = Command::new("a2enconf")
-        .arg(&fpm)
-        .stdout(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
- 
-    if habilitar {
-        println!("[✓] php{}-fpm habilitado.", version);
-    } else {
-        println!("[X] Error al habilitar php{}-fpm.", version);
-    }
-}
-
-
-pub fn versiones_instaladas_php() -> (bool,Vec<String>) {
-    print_header("VERSIONES DE PHP INSTALADAS");
-
-    let versiones_instaladas = get_installed_php();
-
-    if versiones_instaladas.is_empty() {
-        println!("{WARNING} No hay ninguna versión de PHP instalada.");
-        line();
-        return (false, versiones_instaladas);
+    // 2. Buscamos todas las configuraciones de PHP-FPM habilitadas en Apache
+    // y las deshabilitamos una por una.
+    if let Ok(entries) = std::fs::read_dir("/etc/apache2/conf-enabled/") {
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                // Buscamos archivos que sigan el patrón php*-fpm.conf
+                if name.starts_with("php") && name.ends_with("-fpm.conf") {
+                    let conf_name = name.trim_end_matches(".conf");
+                    println!("[*] Deshabilitando configuración: {}", conf_name);
+                    let _ = Command::new("a2disconf").arg(conf_name).status();
+                }
+            }
+        }
     }
 
-    for (i, ver) in versiones_instaladas.iter().enumerate() {
-        println!("{}) PHP {}", i + 1, ver);
-    }
-    line();
-    return (true, versiones_instaladas); 
+    // 3. Recargamos para aplicar la limpieza
+    restart_apache();
+    println!("[✓] Todas las configuraciones FPM han sido deshabilitadas.");
 }
 
 pub fn desinstalacion_php() {
@@ -271,7 +185,7 @@ pub fn desinstalacion_php() {
 
 pub fn modulos_php() {
     // 1. Obtenemos las versiones instaladas directamente en un Vec<String>
-    let (_,versiones_instaladas) = versiones_instaladas_php();
+    let versiones_instaladas = get_installed_php();
     
     // Leemos la opción del usuario
     let seleccion_raw = read_in(&format!("Selecciona la versión para gestionar sus módulos [1-{}]: ", versiones_instaladas.len()));

@@ -2,7 +2,7 @@
 // SERVICIOS PRINCIPALES
 // ==========================================
 use crate::{read_in};
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, execute, findout_software, install_packages, line, print_header, search_json};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, execute, findout_software, line, print_header, search_json};
 use std::fs::{self, OpenOptions};
 use std::env;
 use std::future::Ready;
@@ -74,7 +74,7 @@ pub fn upgrade_server() {
 
 pub fn passwd_root() {
     println!("{} {}", INFO, rust_i18n::t!("CHANGE_PASSWD"));
-    let status = Command::new("passwd").arg("root").stderr(error_log()).status();
+    let status = Command::new("passwd").arg("root").status();
     evaluate(status);
 }
 
@@ -85,23 +85,13 @@ pub fn install_needed_software() {
     println!("{INFO} {}", rust_i18n::t!("INSTALL_NECESSARY"));
 
     let packages_raw = search_json("packages.json", "paquetes_base");
-    let (packages,_) = findout_software(&packages_raw);
+    let ggwellplayed = search_json("packages.json", "apache");
 
-    if !packages.is_empty() {
-        let status= Command::new("apt-get")
-        .args(&["install", "-y"])
-        .args(&packages)
-        .stderr(error_log())
-        .stdout(Stdio::null())
-        .status();
+    install(&packages_raw);
 
-        if evaluate(status) {
-            println!("{OK} {}", "Exito");
-        } else {
-            println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
-            return;
-        }
-    }
+    install(&ggwellplayed);
+
+
 
     println!("[1/2] {} {}", INFO, rust_i18n::t!("ADD_REPOSITORY_PHP"));
     if execute("add-apt-repository", &["ppa:ondrej/php", "-y"]) {
@@ -122,6 +112,26 @@ pub fn install_needed_software() {
     update();
 
     upgrade();
+}
+
+pub fn install(pkg: &[String]) {
+    let (packages,_) = findout_software(pkg);
+
+    if !packages.is_empty() {
+        let status= Command::new("apt-get")
+        .args(&["install", "-y"])
+        .args(&packages)
+        .stderr(error_log())
+        .stdout(Stdio::null())
+        .status();
+
+        if evaluate(status) {
+            println!("{OK} {}", "Exito");
+        } else {
+            println!("{} {}", ERROR_PC, rust_i18n::t!("ERROR_INSTALL_NECESSARY"));
+            return;
+        }
+    }
 }
 
 pub fn drivers_needed() {
@@ -162,16 +172,7 @@ pub fn drivers_needed() {
     };
 
     let packages_raw = search_json("packages.json", &list);
-    let(packages, _) = findout_software(&packages_raw);
-    let status = Command::new("apt-get")
-        .args(["install", "-y"])
-        .args(packages)
-        .stderr(error_log())
-        .stdout(Stdio::null())
-        .status();
-    if !evaluate(status) {
-        println!("{} Error al instalar los drivers necesarios", ERROR_PC);
-    }
+    install(&packages_raw);
 }
 
 pub fn permisos() {

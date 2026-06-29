@@ -7,16 +7,17 @@ mod apache;
 mod mysql;
 mod servicios;
 mod public;
+mod nginx;
+mod data;
 
-use crate::php::{install_php, desinstalacion_php, versiones_instaladas_php, modulos_php, cambiar_php, php_activo};
+use crate::php::*;
+use crate::apache::*;
+use crate::mysql::*;
+use crate::servicios::*;
+use crate::public::*;
+use crate::nginx::*;
+use crate::data::*;
 
-use crate::apache::{version_apache, config_apache, reiniciar_apache, add_site_apache, instalar_cms, disable_php_apache, enable_php_apache, editar_sitio_apache};
-
-use crate::mysql::{instalar_phpmyadmin, configurar_mysql_seguro};
-
-use crate::servicios::{upgrade_server, passwd_root, install_needed_software, drivers_needed, permisos, reboot, auto_start,select_language};
-
-use crate::public::{Settings, error_log, clear_screen, print_header, read_in, line, OK, INFO, WARNING, ERROR_YOU, ERROR_PC, ARROW, LOG_ERRORES};
 
 rust_i18n::i18n!("locales", fallback = "en");
 
@@ -145,7 +146,7 @@ fn main() {
                     match opcion_apache.trim() {
                         "1" => {
                             clear_screen();
-                            reiniciar_apache();
+                            restart_apache();
                             
                             pause();
                         }
@@ -156,7 +157,7 @@ fn main() {
                         }
                         "3" => {
                             clear_screen();
-                            add_site_apache(ip.as_deref().unwrap_or("127.0.0.1"));
+                            add_site("127.0.0.1");
                             pause();
                         }
                         "4" => {
@@ -164,16 +165,16 @@ fn main() {
                             editar_sitio_apache();
                             pause();
                         }
-                        "5" => {
-                            clear_screen();
-                            enable_php_apache(); 
-                            pause();
-                        }
-                        "6" => {
-                            clear_screen();
-                            disable_php_apache(); 
-                            pause();
-                        }
+                        // "5" => {
+                        //     clear_screen();
+                        //     enable_php_apache(); 
+                        //     pause();
+                        // }
+                        // "6" => {
+                        //     clear_screen();
+                        //     disable_php_apache(); 
+                        //     pause();
+                        // }
                         "" | "0" | "exit" => {
                             break;
                         }

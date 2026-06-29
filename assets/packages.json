@@ -10,13 +10,12 @@
     "ufw",
     "ca-certificates",
     "apt-transport-https",
-    "bleachbit",
-    "apache2",
-    "apache2-suexec-pristine",
-    "apache2-suexec-custom",
-    "libapache2-mod-fcgid",
     "mysql-server",
     "mysql-client"
+  ],
+  "gui": [
+    "bleachbit",
+    "gufw"
   ],
   "pkg_virtualbox": [
     "open-vm-tools",
@@ -31,5 +30,14 @@
   "pkg_no_vm": [
     "linux-headers-generic", 
     "firmware-linux-free"
+  ],
+  "apache": [
+    "apache2",
+    "apache2-suexec-pristine",
+    "apache2-suexec-custom",
+    "libapache2-mod-fcgid"
+  ],
+  "nginx": [
+    "nginx"
   ]
 }

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use rust_embed::RustEmbed;
 use serde_json::Value;
 use std::ffi::OsStr;
+use std::io::Result;
 
 
 pub const OK: &str = "[OK]";
@@ -133,7 +134,7 @@ pub fn evaluate_fs<T>(result: io::Result<T>, action: &str, show_logs: bool) -> b
     }
 }
 
-pub fn evaluate(cmd: Result<ExitStatus, E> ) -> bool {
+pub fn evaluate(cmd: Result<ExitStatus> ) -> bool {
     match cmd {
         Ok(status) if status.success() => {
             println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));
@@ -168,12 +169,12 @@ pub fn execute<T: AsRef<OsStr>>(cmd: &str, args: &[T]) -> bool {
 }
 
 //Ejecuta un comando con Output de manera silenciosa
-pub fn output<T: AsRef<str>>(cmd: &str, args: &[T]) -> (String, bool, Result<(), io::Error>) {
+pub fn output(cmd: &str, args: &[&str]) -> (String, bool,) {
     let status = Command::new(cmd).args(args).output();
     match status {
         Ok(out) if out.status.success() => {
             let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
-            (stdout_text, true, Ok(()))
+            (stdout_text, true)
         }
         Ok(out) => {
             let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
@@ -186,12 +187,12 @@ pub fn output<T: AsRef<str>>(cmd: &str, args: &[T]) -> (String, bool, Result<(),
                 stderr_text.trim()
             );
             write_error(&log_msg);
-            (stdout_text, false, Ok(()))
+            (stdout_text, false)
         }
         Err(e) => {
             let log_msg = format!("[CRITICAL ERR] Fallo al lanzar el binario '{}': {}", cmd, e);
             write_error(&log_msg);
-            (String::new(), false, Err(e))
+            (String::new(), false)
         }
     }
 }
@@ -239,23 +240,6 @@ pub fn findout_software(programas: &[String]) -> (Vec<String>, Vec<String>) {
     (faltantes, instalados)
 }
 
-pub fn install_packages(packages_raw: &[String]) -> Vec<String> {
-    let (mut to_install, _) = findout_software(packages_raw);
-
-    // Si no falta nada, devolvemos un vector vacío al instante
-    if to_install.is_empty() {
-        return Vec::new();
-    }
-
-    // 1. Creamos la base directamente como String
-    let mut args = vec!["install".to_string(), "-y".to_string()];
-
-    // 2. FUSIONAMOS: Mueve los elementos de 'to_install' dentro de 'args'
-    args.append(&mut to_install);
-
-    args // Retorno implícito (sin punto y coma)
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Settings {
     pub admin_mode: bool,
@@ -301,6 +285,7 @@ impl Settings {
 #[derive(RustEmbed)]
 #[folder = "assets/"]
 #[include = "*.json"]
+#[include = "*.conf"]
 //const CONF2: &str = include_str!("../assets/config2.json");
 struct Assets;
 
@@ -354,3 +339,73 @@ fn tovec(valor: &Value) -> Vec<String> {
     }
 }
 
+pub fn generate_vhost(sitio: &str, web_dir: &str, ver: &str) -> std::io::Result<()> {
+    // 1. Obtener la plantilla desde el binario
+    let plantilla_bytes = Assets::get("vhost.conf")
+        .expect("La plantilla vhost.conf no existe en los assets");
+    
+    let mut contenido = std::str::from_utf8(plantilla_bytes.data.as_ref())
+        .unwrap()
+        .to_string();
+
+    // 2. Reemplazar los marcadores
+    contenido = contenido.replace("{sitio}", sitio);
+    contenido = contenido.replace("{web_dir}", web_dir);
+    contenido = contenido.replace("{ver}", ver);
+
+    // 3. Definir la ruta destino usando el nombre del sitio
+    // Por ejemplo: /etc/apache2/sites-available/misitio.conf
+    let ruta_destino = format!("/etc/apache2/sites-available/{}.conf", sitio);
+
+    // 4. Escribir el archivo
+    std::fs::write(&ruta_destino, contenido)?;
+    
+    println!("[✓] Archivo de configuración generado: {}", ruta_destino);
+    Ok(())
+}
+
+pub fn valid_name(nombre: &str) -> bool {
+    // 1. Longitud
+    if nombre.is_empty() || nombre.len() > 64 {
+        return false;
+    }
+
+    // 2. No debe empezar con guion ni terminar con guion (mejor práctica)
+    if nombre.starts_with('-') || nombre.starts_with('_') || nombre.ends_with('-') || nombre.ends_with('_') {
+        return false;
+    }
+
+    // 3. Caracteres permitidos (quitamos el punto y coma final para que sea el resultado de la función)
+    nombre.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+//Imprime una lista 
+pub fn list_version(list: &[String]) -> usize {
+    if list.is_empty() {
+        println!("{WARNING} No hay nada que enlistar o no tiene nada instalado.");
+        line();
+        return 0; // Devolvemos 0 si está vacía
+    }
+
+    for (i, ver) in list.iter().enumerate() {
+        // Nota: cambié i por i + 1 para que el menú sea más natural para el usuario
+        println!("{}) PHP{}", i + 1, ver);
+    }
+    line();
+
+    list.len() // Esta es la cantidad de elementos, se devuelve implícitamente
+}
+
+pub fn valid_input(input: &str, lista_len: usize) -> bool {
+    // Intentamos parsear y asignamos directamente el resultado a 'idx'
+    let idx: usize = match input.trim().parse() {
+        Ok(num) => num, // <- AQUÍ está la clave: devolvemos 'num' para asignarlo a 'idx'
+        Err(_) => {
+            println!("[X] Opción inválida.");
+            return false;
+        }
+    };
+
+    // Verificamos el rango
+    idx >= 1 && idx <= lista_len
+}

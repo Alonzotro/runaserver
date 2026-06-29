@@ -10,20 +10,20 @@ use mysql::prelude::*;
 pub fn ajustar_politicas_password() {
     // 1. Intentamos instalar de ambas formas de manera silenciosa. 
     // Ignoramos el resultado porque si ya existen, saltará un error inocuo.
-    execute("mysql", &["-u", "root", "-e", "INSTALL COMPONENT 'file://component_validate_password';"], true, true);
+    execute("mysql", &["-u", "root", "-e", "INSTALL COMPONENT 'file://component_validate_password';"]);
 
-    execute("mysql", &["-u", "root", "-e", "INSTALL PLUGIN validate_password SONAME 'validate_password.so';"], true, true);
+    execute("mysql", &["-u", "root", "-e", "INSTALL PLUGIN validate_password SONAME 'validate_password.so';"]);
 
     // 2. Intentar ajuste con sintaxis de Componente (Usamos 0 que es LOW universalmente)
     let query_componente = "SET GLOBAL validate_password.policy=0; SET GLOBAL validate_password.length=4;";
-    if execute("mysql", &["-u", "root", "-e", query_componente], true, false) {
+    if execute("mysql", &["-u", "root", "-e", query_componente]) {
         println!("{} {}", OK, rust_i18n::t!("DB_POLICIES_SUCCESS"));
         return;
     }
 
     // 3. Fallback: Sintaxis de Plugin antiguo
     let query_plugin = "SET GLOBAL validate_password_policy=0; SET GLOBAL validate_password_length=4;";
-    if execute("mysql", &["-u", "root", "-e", query_plugin], true, false) {
+    if execute("mysql", &["-u", "root", "-e", query_plugin]) {
         println!("{} {}", OK, rust_i18n::t!("DB_POLICIES_SUCCESS"));
     }
 }

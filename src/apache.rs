@@ -1,12 +1,13 @@
 // ==========================================
 // APACHE MANAGEMENT
 // ==========================================
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, line, print_header, read_in, execute, evaluate, output};
+use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, execute, generate_vhost, line, output, print_header, read_in, valid_input, valid_name};
 use crate::servicios::permisos;
-use crate::php::{versiones_instaladas_php};
+use crate::public::{list_version};
+use crate::data::{sort_versions, search_module, get_installable_php, get_installed_php_fpm, get_installed_php};
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write, BufRead, BufReader, ErrorKind};
+use std::io::{self, BufRead, BufReader, ErrorKind, Write, stdout};
 use std::error::Error;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -14,47 +15,8 @@ use std::sync::OnceLock;
 use regex::Regex;
 use ureq::http::status;
 
-fn get_php_fpm() -> Vec<String> {
-    let mut versiones = Vec::new();
-    
-    // 1. Corregido: Leemos el directorio nativamente (entradas)
-    if let Ok(entradas) = fs::read_dir("/etc/apache2/conf-available/") {
-        for entrada in entradas.flatten() {
-            if let Ok(nombre_archivo) = entrada.file_name().into_string() {
-                
-                // 2. Filtramos los archivos php*-fpm.conf
-                if nombre_archivo.starts_with("php") && nombre_archivo.ends_with("-fpm.conf") {
-                    let version = nombre_archivo
-                        .replace("php", "")
-                        .replace("-fpm.conf", "");
-                    
-                    if !version.trim().is_empty() {
-                        versiones.push(version.trim().to_string());
-                    }
-                }
-            }
-        }
-    }
-    
-    // 3. ✅ Ordenamiento blindado contra errores de compilación
-    versiones.sort_by(|a, b| {
-        // Al usar .parse::<u32>() y |c| c == '.', el compilador ya no tiene dudas
-        let a_num: Vec<u32> = a.split(|c| c == '.')
-            .filter_map(|s| s.parse::<u32>().ok())
-            .collect();
-            
-        let b_num: Vec<u32> = b.split(|c| c == '.')
-            .filter_map(|s| s.parse::<u32>().ok())
-            .collect();
-            
-        a_num.cmp(&b_num)
-    });
-    
-    // 4. Eliminamos duplicados consecutivos
-    versiones.dedup(); 
 
-    versiones
-}
+
 
 pub fn version_apache() -> io::Result<()> {
     line();
@@ -130,7 +92,7 @@ pub fn config_apache() {
     //println!("{} {}", OK, rust_i18n::t!("CONFIGURED_SUCCESS"));
 }
 
-pub fn reiniciar_apache() {
+pub fn restart_apache() {
     // 1. Describimos la acción que se va a ejecutar
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
 
@@ -152,80 +114,60 @@ fn io_ok(resultado: io::Result<()>) -> bool {
  
 // ─────────────────────────────────────────────────────────────────────────────
  
-pub fn add_site_apache(ip: &str) {
+pub fn add_site(ip: &str) {
     // 1. Solicitar y validar nombre del sitio
-    let sitio_raw = read_in(&rust_i18n::t!("PROMPT_SITE_NAME"));
-    let sitio = sitio_raw.trim();
- 
-    if sitio.is_empty()
-        || !sitio.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
-    {
+    let sitio = read_in(&rust_i18n::t!("PROMPT_SITE_NAME"));
+
+
+    if !valid_name(sitio.trim()) {
         println!("[X] {}", rust_i18n::t!("INVALID_SITE_NAME"));
         return;
     }
  
+
     // 2. Rutas y comprobación de duplicado
     let conf_file = format!("/etc/apache2/sites-available/{}.conf", sitio);
     let web_dir   = format!("/var/www/{}", sitio);
  
+
     if Path::new(&conf_file).exists() {
         println!("[X] {}", rust_i18n::t!("SITE_ALREADY_EXISTS", site = sitio));
         return;
     }
- 
+
     // 3. Seleccionar versión PHP-FPM disponible
-    let versiones = get_php_fpm();
-    if versiones.is_empty() {
-        println!("[X] {}", rust_i18n::t!("NO_PHP_FPM_CONFIGS"));
-        return;
-    }
- 
     print_header(&rust_i18n::t!("SELECT_PHP_VERSION_TITLE"));
-    for (i, ver) in versiones.iter().enumerate() {
-        println!("{}) php{}", i + 1, ver);
-    }
-    line();
- 
+    let list = get_installed_php_fpm();
+    let mount = list_version(&list);
+
     let sel  = read_in(&rust_i18n::t!("PROMPT_PHP_VERSION"));
-    let idx: usize = sel.trim().parse().unwrap_or(0);
-    if idx < 1 || idx > versiones.len() {
+    let ver_elegida: &str; 
+
+    if valid_input(&sel, mount) {
+        let num_usuario: usize = sel.trim().parse().unwrap_or(0);
+        let idx = num_usuario - 1;
+
+        // 2. Aquí realizamos el préstamo como &str
+        // list[idx] es un String, .as_str() lo convierte a &str
+        ver_elegida = &list[idx]; 
+    } else {
         println!("[X] {}", rust_i18n::t!("INVALID_PHP_VERSION"));
         return;
     }
-    let ver_elegida = &versiones[idx - 1];
- 
-    // 4. Generar contenido del VirtualHost
-    let vhost = format!(
-        "<VirtualHost *:80>\n\
-        \tServerName {sitio}.lan\n\
-        \tDocumentRoot {web_dir}\n\
-        \n\
-        \t<Directory {web_dih}>\n\
-        \t\tAllowOverride All\n\
-        \t\tRequire all granted\n\
-        \t</Directory>\n\
-        \n\
-        \t<FilesMatch \"\\.php$\">\n\
-        \t\t<IfModule mod_proxy_fcgi.c>\n\
-        \t\t\tSetHandler \"proxy:unix:/run/php/php{ver}-fpm.sock|fcgi://localhost\"\n\
-        \t\t</IfModule>\n\
-        \t</FilesMatch>\n\
-        </VirtualHost>",
-        sitio   = sitio,
-        web_dih = web_dir,
-        ver     = ver_elegida
-    );
- 
-    // 5. Crear archivo .conf
-    // FIX: fs::write devuelve Result<(), io::Error> → io_ok, no execute
+
+    // Ahora 'ver_elegida' es un &str y puedes usarlo libremente
+    println!("Versión lista para operar: {}", ver_elegida);
+
+
+
     println!("{}", rust_i18n::t!("CREATING_VHOST"));
-    if !io_ok(fs::write(&conf_file, &vhost)) { return; }
+    if !io_ok(generate_vhost(&sitio, &web_dir, ver_elegida)) { return; }
  
     // 6. Crear directorio web
     // FIX: mismo caso — io_ok en vez de execute(..., true)
     println!("{}", rust_i18n::t!("CREATING_WEB_DIR"));
     if !io_ok(fs::create_dir_all(&web_dir)) { return; }
- 
+
     // 7. Permisos del directorio web
     println!("{}", rust_i18n::t!("SETTING_WEB_PERMISSIONS"));
     permisos(); // pasa la ruta; ajusta la firma de permisos() si hace falta
@@ -253,140 +195,137 @@ pub fn add_site_apache(ip: &str) {
  
     // 10. Reiniciar Apache
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
-    if !execute("systemctl", &["restart", "apache2"]) { return; }
+    restart_apache();
  
     println!("{} {}", OK, rust_i18n::t!("SITE_CREATED_SUCCESS", site = sitio, version = ver_elegida));
 }
 
-pub fn disable_php_apache() {
+// pub fn disable_php_apache() {
 
-    let versiones_activas = get_php_fpm();
+//     let versiones_activas = get_php_fpm();
 
-    if versiones_activas.is_empty() {
-        println!("   [!] {}", rust_i18n::t!("NO_ACTIVE_PHP_FPM"));
-        return;
-    }
+//     if versiones_activas.is_empty() {
+//         println!("   [!] {}", rust_i18n::t!("NO_ACTIVE_PHP_FPM"));
+//         return;
+//     }
 
-    clear_screen();
+//     clear_screen();
 
-    // 2. Mostrar menú de configuraciones activas
-    println!("=========================================");
-    println!("     {}       ", rust_i18n::t!("ACTIVE_FPM_TITLE"));
-    println!("=========================================");
-    for (i, ver) in versiones_activas.iter().enumerate() {
-        println!("{}) php{}-fpm", i + 1, ver);
-    }
-    println!("=========================================");
+//     // 2. Mostrar menú de configuraciones activas
+//     println!("=========================================");
+//     println!("     {}       ", rust_i18n::t!("ACTIVE_FPM_TITLE"));
+//     println!("=========================================");
+//     for (i, ver) in versiones_activas.iter().enumerate() {
+//         println!("{}) php{}-fpm", i + 1, ver);
+//     }
+//     println!("=========================================");
 
-    // 3. Lectura de la selección
-    let prompt = rust_i18n::t!("PROMPT_DISABLE_FPM", max = versiones_activas.len());
-    let seleccion_raw = read_in(&prompt);
-    let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
+//     // 3. Lectura de la selección
+//     let prompt = rust_i18n::t!("PROMPT_DISABLE_FPM", max = versiones_activas.len());
+//     let seleccion_raw = read_in(&prompt);
+//     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
 
-    if seleccion < 1 || seleccion > versiones_activas.len() {
-        println!("[X] {}", rust_i18n::t!("INVALID_OPTION_CANCELLED"));
-        return;
-    }
+//     if seleccion < 1 || seleccion > versiones_activas.len() {
+//         println!("[X] {}", rust_i18n::t!("INVALID_OPTION_CANCELLED"));
+//         return;
+//     }
 
-    // 4. Preparar variables de ejecución
-    let version_seleccionada = &versiones_activas[seleccion - 1];
-    let nombre_fpm = format!("php{}-fpm", version_seleccionada);
+//     // 4. Preparar variables de ejecución
+//     let version_seleccionada = &versiones_activas[seleccion - 1];
+//     let nombre_fpm = format!("php{}-fpm", version_seleccionada);
 
-    // 5. PASO 1: Deshabilitar la configuración en Apache
-    println!("\n{}", rust_i18n::t!("DISABLING_APACHE_CONF", name = &nombre_fpm));
+//     // 5. PASO 1: Deshabilitar la configuración en Apache
+//     println!("\n{}", rust_i18n::t!("DISABLING_APACHE_CONF", name = &nombre_fpm));
     
-    let comando_apache = Command::new("a2disconf")
-        .arg(&nombre_fpm)
-        .stdout(Stdio::null()) 
-        .stderr(error_log())
-        .status();
+//     let comando_apache = Command::new("a2disconf")
+//         .arg(&nombre_fpm)
+//         .stdout(Stdio::null()) 
+//         .stderr(error_log())
+//         .status();
 
-    if execute(comando_apache, true) {
-        // Si se deshabilitó con éxito, pintamos el recordatorio debajo del [✓]
-        println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
-    }
+//     if evaluate(comando_apache) {
+//         // Si se deshabilitó con éxito, pintamos el recordatorio debajo del [✓]
+//         println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
+//     }
 
-    // 6. PASO 2: Detener el servicio de FPM en el sistema
-    println!("\n{}", rust_i18n::t!("STOPPING_FPM_SERVICE", name = &nombre_fpm));
+//     // 6. PASO 2: Detener el servicio de FPM en el sistema
+//     println!("\n{}", rust_i18n::t!("STOPPING_FPM_SERVICE", name = &nombre_fpm));
     
-    let comando_sys = Command::new("systemctl")
-        .args(&["stop", &nombre_fpm])
-        .stdout(Stdio::null()) 
-        .stderr(error_log())
-        .status();
+//     let comando_sys = Command::new("systemctl")
+//         .args(&["stop", &nombre_fpm])
+//         .stdout(Stdio::null()) 
+//         .stderr(error_log())
+//         .status();
 
-    execute(comando_sys, true);
-}
+//     evaluate(comando_sys);
+// }
 
-pub fn enable_php_apache() {
-    let versiones_disponibles = get_php_fpm();
-
-    if versiones_disponibles.is_empty() {
-        println!("   [!] {}", rust_i18n::t!("NO_AVAILABLE_PHP_FPM"));
-        return;
-    }
-
-    clear_screen();
-
-    // 2. Mostrar menú de configuraciones disponibles
-    println!("=========================================");
-    println!("    {}      ", rust_i18n::t!("AVAILABLE_FPM_TITLE"));
-    println!("=========================================");
-    for (i, ver) in versiones_disponibles.iter().enumerate() {
-        println!("{}) php{}-fpm", i + 1, ver);
-    }
-    println!("=========================================");
-
-    // 3. Lectura de la selección del usuario
-    let prompt = rust_i18n::t!("PROMPT_ENABLE_FPM", max = versiones_disponibles.len());
-    let seleccion_raw = read_in(&prompt);
-    let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
-
-    if seleccion < 1 || seleccion > versiones_disponibles.len() {
-        println!("[X] {}", rust_i18n::t!("INVALID_OPTION_CANCELLED"));
-        return;
-    }
-
-    // 4. Extraemos la versión seleccionada
-    let version_seleccionada = &versiones_disponibles[seleccion - 1];
-    let nombre_fpm = format!("php{}-fpm", version_seleccionada);
-
-    // 5. PASO 1: Iniciar y habilitar el servicio FPM en el sistema operativo
-    println!("\n{}", rust_i18n::t!("STARTING_FPM_SERVICE", name = &nombre_fpm));
-    
-    let status_fpm = Command::new("systemctl")
-        .args(&["start", &nombre_fpm])
-        .stdout(Stdio::null()) 
-        .stderr(error_log())
-        .status();
-
-    // Si la macro detecta que el servicio NO inició, hacemos un 'return' temprano seguro
-    if !execute(status_fpm, true) {
-        return; 
-    }
-
-    // Como el servicio inició bien, lo habilitamos para que arranque con el sistema de forma silenciosa
-    let _ = Command::new("systemctl")
-        .args(&["enable", &nombre_fpm])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-
-    // 6. PASO 2: Enlazar la configuración en Apache usando a2enconf
-    println!("\n{}", rust_i18n::t!("ENABLING_APACHE_CONF", name = &nombre_fpm));
-    
-    let status_apache = Command::new("a2enconf")
-        .arg(&nombre_fpm)
-        .stdout(Stdio::null()) 
-        .stderr(error_log())
-        .status();
-
-    if execute(status_apache, true) {
-        // Si se enlazó con éxito, pintamos el recordatorio de reinicio debajo del [✓]
-        println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
-    }
-}
+// pub fn enable_php_apache() {
+//     let versiones_disponibles = get_installed_php_fpm();
+//
+//     if versiones_disponibles.is_empty() {
+//         println!("   [!] {}", rust_i18n::t!("NO_AVAILABLE_PHP_FPM"));
+//         return;
+//     }
+//
+//     clear_screen();
+//
+//     // 2. Mostrar menú de configuraciones disponibles
+//     println!("=========================================");
+//     println!("    {}      ", rust_i18n::t!("AVAILABLE_FPM_TITLE"));
+//     println!("=========================================");
+//     for (i, ver) in versiones_disponibles.iter().enumerate() {
+//         println!("{}) php{}-fpm", i + 1, ver);
+//     }
+//     println!("=========================================");
+//
+//     // 3. Lectura de la selección del usuario
+//     let prompt = rust_i18n::t!("PROMPT_ENABLE_FPM", max = versiones_disponibles.len());
+//     let seleccion_raw = read_in(&prompt);
+//     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
+//
+//     if seleccion < 1 || seleccion > versiones_disponibles.len() {
+//         println!("[X] {}", rust_i18n::t!("INVALID_OPTION_CANCELLED"));
+//         return;
+//     }
+//
+//     // 4. Extraemos la versión seleccionada
+//     let version_seleccionada = &versiones_disponibles[seleccion - 1];
+//     let nombre_fpm = format!("php{}-fpm", version_seleccionada);
+//
+//     // 5. PASO 1: Iniciar y habilitar el servicio FPM en el sistema operativo
+//     println!("\n{}", rust_i18n::t!("STARTING_FPM_SERVICE", name = &nombre_fpm));
+//    
+//     let status_fpm = Command::new("systemctl")
+//         .args(&["start", &nombre_fpm])
+//         .stdout(Stdio::null()) 
+//         .stderr(error_log())
+//         .status();
+//
+//     // Si la macro detecta que el servicio NO inició, hacemos un 'return' temprano seguro
+//     if !evaluate(status_fpm) {
+//         return; 
+//     }
+//     // Como el servicio inició bien, lo habilitamos para que arranque con el sistema de forma silenciosa
+//     let _ = Command::new("systemctl")
+//         .args(&["enable", &nombre_fpm])
+//         .stdout(Stdio::null())
+//         .stderr(Stdio::null())
+//         .status();
+//     // 6. PASO 2: Enlazar la configuración en Apache usando a2enconf
+//     println!("\n{}", rust_i18n::t!("ENABLING_APACHE_CONF", name = &nombre_fpm));
+//   
+//     let status_apache = Command::new("a2enconf")
+//         .arg(&nombre_fpm)
+//         .stdout(Stdio::null()) 
+//         .stderr(error_log())
+//         .status();
+//
+//     if evaluate(status_apache) {
+//         // Si se enlazó con éxito, pintamos el recordatorio de reinicio debajo del [✓]
+//         println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
+//     }
+// }
 
 pub struct SitioActivo {
     nombre: String,
@@ -480,7 +419,7 @@ pub fn instalar_cms() {
         "4" => Some(CmsPaquete { nombre: "Moodle", url: "https://download.moodle.org/download.php/direct/stable404/moodle-latest-404.tgz", archivo_cache: "moodle_4.x.tgz", es_zip: false }),
         "5" => {
             let ruta_info = format!("{}/info.php", sitio_elegido.ruta);
-            if execute(fs::write(&ruta_info, "<?php phpinfo(); ?>\n"), true) {
+            if io_ok(fs::write(&ruta_info, "<?php phpinfo(); ?>\n")) {
                 let _ = Command::new("chown").args(&["www-data:www-data", &ruta_info]).status();
                 let dominio = sitio_elegido.nombre.replace(".conf", "");
                 println!("[i] Puedes verlo en: http://{}/info.php", dominio);
@@ -491,7 +430,7 @@ pub fn instalar_cms() {
             println!("[!] ADVERTENCIA: Se eliminará TODO el contenido de {}", sitio_elegido.ruta);
             if read_in("¿Estás seguro? (s/n): ").trim().to_lowercase() == "s" {
                 let cmd_limpiar = format!("find {} -mindepth 1 -delete", sitio_elegido.ruta);
-                execute(Command::new("bash").args(&["-c", &cmd_limpiar]).status(), true);
+                evaluate(Command::new("bash").args(&["-c", &cmd_limpiar]).status());
             }
             return;
         }
@@ -513,7 +452,7 @@ pub fn instalar_cms() {
         } else {
             // Si no existe, se descarga directamente a la caché
             println!("{}", rust_i18n::t!("DOWNLOADING_CMS", name = cms.nombre));
-            if !execute(Command::new("wget").args(&["-qO", &ruta_completa_cache, cms.url]).status(), true) {
+            if !evaluate(Command::new("wget").args(&["-qO", &ruta_completa_cache, cms.url]).stderr(error_log()).stdout(Stdio::null()).status()) {
                 return;
             }
         }
@@ -555,7 +494,7 @@ pub fn instalar_cms() {
             Command::new("tar").args(&["-xzf", &ruta_completa_cache, "--strip-components=1", "-C", &sitio_elegido.ruta]).status()
         };
 
-        if execute(estatus_extraccion, true) {
+        if evaluate(estatus_extraccion) {
             // 5. Permisos Finales
             println!("{}", rust_i18n::t!("APPLYING_PERMISSIONS"));
             let _ = Command::new("chown").args(&["-R", "www-data:www-data", &sitio_elegido.ruta]).status();
@@ -624,7 +563,8 @@ pub fn editar_sitio_apache() {
     
     // 4. Crear backup evaluado (Si falla, se detiene por seguridad)
     let backup_path = format!("{}.bak", path.display());
-    if !execute(fs::copy(&path, &backup_path), true) {
+    if let Err(e) = fs::copy(&path, &backup_path) {
+        eprintln!("[X] Error al copiar el archivo: {}", e);
         return;
     }
     
@@ -649,7 +589,8 @@ pub fn editar_sitio_apache() {
         contenido = re.dir.replace(&contenido, format!("<Directory {}>", nuevo_root)).to_string();
     }
 
-    versiones_instaladas_php(); // Tu función existente que lista las versiones de PHP en el sistema
+    let list = get_installed_php();
+    let mount = list_version(&list); // Tu función existente que lista las versiones de PHP en el sistema
 
     let nueva_ver = read_in(&rust_i18n::t!("PROMPT_NEW_PHP_VER"));
     if !nueva_ver.is_empty() {
@@ -662,7 +603,7 @@ pub fn editar_sitio_apache() {
     }
 
     // 6. Guardar cambios usando command
-    if !execute(fs::write(&path, contenido), true) {
+    if !io_ok(fs::write(&path, contenido)) {
         return;
     }
     println!("{}", rust_i18n::t!("FILE_UPDATED_BACKUP", backup = &backup_path));
@@ -679,7 +620,7 @@ pub fn editar_sitio_apache() {
     if test_status.is_ok() && test_status.unwrap().success() {
         // Si el test pasa, reiniciamos el servicio de forma limpia
         let restart_status = Command::new("systemctl").args(&["restart", "apache2"]).status();
-        if execute(restart_status, true) {
+        if evaluate(restart_status) {
             println!("{}", rust_i18n::t!("CONFIG_VALID_RESTARTED"));
         }
     } else {

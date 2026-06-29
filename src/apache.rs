@@ -1,10 +1,10 @@
 // ==========================================
 // APACHE MANAGEMENT
 // ==========================================
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, execute, generate_vhost, line, output, print_header, read_in, valid_input, valid_name};
+use crate::public::*;
+use crate::checker::*;
 use crate::servicios::permisos;
-use crate::public::{list_version};
-use crate::data::{sort_versions, search_module, get_installable_php, get_installed_php_fpm, get_installed_php};
+use crate::data::*;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, ErrorKind, Write, stdout};
@@ -14,8 +14,6 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use regex::Regex;
 use ureq::http::status;
-
-
 
 
 pub fn version_apache() -> io::Result<()> {
@@ -102,16 +100,12 @@ pub fn restart_apache() {
     }
 }
 
-fn io_ok(resultado: io::Result<()>) -> bool {
-    match resultado {
-        Ok(_) => true,
-        Err(e) => {
-            println!("{} {}", ERROR_PC, e);
-            false
-        }
-    }
-}
- 
+// pub fn get_available_sites_apache() -> Vec<String> {
+//     get_dir("/etc/apache2/sites-available/").unwrap_or_else(|e| {
+//         println!("{} Error leyendo sites-available: {}", ERROR_PC, e);
+//         Vec::new()
+//     })
+// }
 // ─────────────────────────────────────────────────────────────────────────────
  
 pub fn add_site(ip: &str) {
@@ -137,8 +131,8 @@ pub fn add_site(ip: &str) {
 
     // 3. Seleccionar versión PHP-FPM disponible
     print_header(&rust_i18n::t!("SELECT_PHP_VERSION_TITLE"));
-    let list = get_installed_php_fpm();
-    let mount = list_version(&list);
+    let listar = get_installed_php_fpm();
+    let mount = list(&listar);
 
     let sel  = read_in(&rust_i18n::t!("PROMPT_PHP_VERSION"));
     let ver_elegida: &str; 
@@ -149,7 +143,7 @@ pub fn add_site(ip: &str) {
 
         // 2. Aquí realizamos el préstamo como &str
         // list[idx] es un String, .as_str() lo convierte a &str
-        ver_elegida = &list[idx]; 
+        ver_elegida = &listar[idx]; 
     } else {
         println!("[X] {}", rust_i18n::t!("INVALID_PHP_VERSION"));
         return;
@@ -161,12 +155,12 @@ pub fn add_site(ip: &str) {
 
 
     println!("{}", rust_i18n::t!("CREATING_VHOST"));
-    if !io_ok(generate_vhost(&sitio, &web_dir, ver_elegida)) { return; }
+    if !confirm(generate_vhost(&sitio, &web_dir, ver_elegida)) { return; }
  
     // 6. Crear directorio web
-    // FIX: mismo caso — io_ok en vez de execute(..., true)
+    // FIX: mismo caso — confirm en vez de execute(..., true)
     println!("{}", rust_i18n::t!("CREATING_WEB_DIR"));
-    if !io_ok(fs::create_dir_all(&web_dir)) { return; }
+    if !confirm(fs::create_dir_all(&web_dir)) { return; }
 
     // 7. Permisos del directorio web
     println!("{}", rust_i18n::t!("SETTING_WEB_PERMISSIONS"));
@@ -185,13 +179,13 @@ pub fn add_site(ip: &str) {
     }
  
     // 9. Agregar entrada a /etc/hosts
-    // FIX: writeln! devuelve Result<(), io::Error> → io_ok, no execute
+    // FIX: writeln! devuelve Result<(), io::Error> → confirm, no execute
     println!("{}", rust_i18n::t!("UPDATING_HOSTS_FILE"));
     let hosts_result = OpenOptions::new()
         .append(true)
         .open("/etc/hosts")
         .and_then(|mut f| writeln!(f, "{}   {}.lan", ip, sitio));
-    if !io_ok(hosts_result) { return; }
+    if !confirm(hosts_result) { return; }
  
     // 10. Reiniciar Apache
     println!("{}", rust_i18n::t!("RESTARTING_APACHE"));
@@ -211,7 +205,7 @@ pub fn add_site(ip: &str) {
 
 //     clear_screen();
 
-//     // 2. Mostrar menú de configuraciones activas
+//     2. Mostrar menú de configuraciones activas
 //     println!("=========================================");
 //     println!("     {}       ", rust_i18n::t!("ACTIVE_FPM_TITLE"));
 //     println!("=========================================");
@@ -220,7 +214,7 @@ pub fn add_site(ip: &str) {
 //     }
 //     println!("=========================================");
 
-//     // 3. Lectura de la selección
+//     3. Lectura de la selección
 //     let prompt = rust_i18n::t!("PROMPT_DISABLE_FPM", max = versiones_activas.len());
 //     let seleccion_raw = read_in(&prompt);
 //     let seleccion: usize = seleccion_raw.trim().parse().unwrap_or(0);
@@ -230,11 +224,11 @@ pub fn add_site(ip: &str) {
 //         return;
 //     }
 
-//     // 4. Preparar variables de ejecución
+//     4. Preparar variables de ejecución
 //     let version_seleccionada = &versiones_activas[seleccion - 1];
 //     let nombre_fpm = format!("php{}-fpm", version_seleccionada);
 
-//     // 5. PASO 1: Deshabilitar la configuración en Apache
+//     5. PASO 1: Deshabilitar la configuración en Apache
 //     println!("\n{}", rust_i18n::t!("DISABLING_APACHE_CONF", name = &nombre_fpm));
     
 //     let comando_apache = Command::new("a2disconf")
@@ -244,11 +238,11 @@ pub fn add_site(ip: &str) {
 //         .status();
 
 //     if evaluate(comando_apache) {
-//         // Si se deshabilitó con éxito, pintamos el recordatorio debajo del [✓]
+//         Si se deshabilitó con éxito, pintamos el recordatorio debajo del [✓]
 //         println!("       {}", rust_i18n::t!("REMINDER_RESTART_APACHE"));
 //     }
 
-//     // 6. PASO 2: Detener el servicio de FPM en el sistema
+//     6. PASO 2: Detener el servicio de FPM en el sistema
 //     println!("\n{}", rust_i18n::t!("STOPPING_FPM_SERVICE", name = &nombre_fpm));
     
 //     let comando_sys = Command::new("systemctl")
@@ -419,7 +413,7 @@ pub fn instalar_cms() {
         "4" => Some(CmsPaquete { nombre: "Moodle", url: "https://download.moodle.org/download.php/direct/stable404/moodle-latest-404.tgz", archivo_cache: "moodle_4.x.tgz", es_zip: false }),
         "5" => {
             let ruta_info = format!("{}/info.php", sitio_elegido.ruta);
-            if io_ok(fs::write(&ruta_info, "<?php phpinfo(); ?>\n")) {
+            if confirm(fs::write(&ruta_info, "<?php phpinfo(); ?>\n")) {
                 let _ = Command::new("chown").args(&["www-data:www-data", &ruta_info]).status();
                 let dominio = sitio_elegido.nombre.replace(".conf", "");
                 println!("[i] Puedes verlo en: http://{}/info.php", dominio);
@@ -590,7 +584,7 @@ pub fn editar_sitio_apache() {
     }
 
     let list = get_installed_php();
-    let mount = list_version(&list); // Tu función existente que lista las versiones de PHP en el sistema
+    let mount = list(&list); // Tu función existente que lista las versiones de PHP en el sistema
 
     let nueva_ver = read_in(&rust_i18n::t!("PROMPT_NEW_PHP_VER"));
     if !nueva_ver.is_empty() {
@@ -603,7 +597,7 @@ pub fn editar_sitio_apache() {
     }
 
     // 6. Guardar cambios usando command
-    if !io_ok(fs::write(&path, contenido)) {
+    if !confirm(fs::write(&path, contenido)) {
         return;
     }
     println!("{}", rust_i18n::t!("FILE_UPDATED_BACKUP", backup = &backup_path));

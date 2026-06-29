@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::{result, string, vec};
 use chrono::Local;
-use std::collections::HashSet;
-use serde::{Deserialize, Serialize};
-use rust_embed::RustEmbed;
+
+
 use serde_json::Value;
-use std::ffi::OsStr;
+
 use std::io::Result;
 
+use crate::data::*;
 
 pub const OK: &str = "[OK]";
 pub const INFO: &str = "[•]";
@@ -110,94 +110,7 @@ macro_rules! read_in {
     }};
 }
 
-// Asumo que `error_log()`, `OK`, `WARNING`, `ERROR_PC` y las macros de
-// rust_i18n ya están definidas en otro módulo de tu proyecto, igual que
-// en tu versión original.
-pub fn evaluate_fs<T>(result: io::Result<T>, action: &str, show_logs: bool) -> bool {
-    match result {
-        Ok(_) => {
-            if show_logs {
-                println!("{} {}: {}", OK, rust_i18n::t!("FS_SUCCESS"), action);
-            }
-            true
-        }
-        Err(e) => {
-            // ✅ CORRECCIÓN: Enviamos el error directamente a stderr del sistema.
-            // Al ser un error nativo de Rust, no usamos Stdio de procesos.
-            eprintln!("[FS ERR] {}: {}", action, e);
-
-            if show_logs {
-                println!("{} {}: {} -> {}", ERROR_PC, rust_i18n::t!("FS_ERROR"), action, e);
-            }
-            false
-        }
-    }
-}
-
-pub fn evaluate(cmd: Result<ExitStatus> ) -> bool {
-    match cmd {
-        Ok(status) if status.success() => {
-            println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));
-            true
-        }
-        Ok(status) => {
-                let code = status
-                    .code()
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "?".to_string());
-
-                println!("{} {}", WARNING, rust_i18n::t!("RESULT"));
-                println!("{} {}", rust_i18n::t!("CODE"), code);
-            false
-        }
-        Err(e) => {
-                println!("{} {}", ERROR_PC, rust_i18n::t!("RESULT_ERROR"));
-                println!("{} {}", rust_i18n::t!("ERROR_CAUSE"), e);
-            false
-        }
-    }
-}
-
-//Ejecuta un comando con Status de manera silenciosa
-pub fn execute<T: AsRef<OsStr>>(cmd: &str, args: &[T]) -> bool {
-    let status = Command::new(cmd)
-        .args(args)           // ← directo, sin Vec intermedio
-        .stderr(error_log())
-        .stdout(Stdio::null())
-        .status();
-    evaluate(status)
-}
-
-//Ejecuta un comando con Output de manera silenciosa
-pub fn output(cmd: &str, args: &[&str]) -> (String, bool,) {
-    let status = Command::new(cmd).args(args).output();
-    match status {
-        Ok(out) if out.status.success() => {
-            let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
-            (stdout_text, true)
-        }
-        Ok(out) => {
-            let stdout_text = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr_text = String::from_utf8_lossy(&out.stderr);
-            
-            // Armamos el mensaje aquí arriba teniendo acceso limpio a 'out'
-            let log_msg = format!(
-                "[ERROR] Comando fallido con código ({}).\nDetalle: {}", 
-                out.status, 
-                stderr_text.trim()
-            );
-            write_error(&log_msg);
-            (stdout_text, false)
-        }
-        Err(e) => {
-            let log_msg = format!("[CRITICAL ERR] Fallo al lanzar el binario '{}': {}", cmd, e);
-            write_error(&log_msg);
-            (String::new(), false)
-        }
-    }
-}
-
-fn write_error(mensaje: &str) {
+pub fn write_error(mensaje: &str) {
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
         .append(true)
@@ -209,119 +122,7 @@ fn write_error(mensaje: &str) {
     }
 }
 
-pub fn findout_software(programas: &[String]) -> (Vec<String>, Vec<String>) {
-    if programas.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-
-    let instalados: Vec<String> = Command::new("dpkg-query")
-        .args(["-W", "-f=${Package}\n"])
-        .args(programas)
-        .stderr(Stdio::null())
-        .output()
-        .map(|out| {
-            String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
- 
-    let instalados_set: HashSet<&str> = instalados.iter().map(String::as_str).collect();
- 
-    let faltantes: Vec<String> = programas
-        .iter()
-        .filter(|p| !instalados_set.contains(p.as_str()))
-        .cloned()
-        .collect();
- 
-    (faltantes, instalados)
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Settings {
-    pub admin_mode: bool,
-    //pub server_name: String,
-}
-
-impl Settings {
-    const FILE_PATH: &'static str = "settings.toml";
-
-    // 2. Función para cargar (si no existe, crea uno por defecto)
-    pub fn load() -> Self {
-        if !Path::new(Self::FILE_PATH).exists() {
-            let default_settings = Settings {
-                admin_mode: false,
-                //server_name: String::from("Mi Servidor Rust"),
-            };
-            default_settings.save();
-            return default_settings;
-        }
-
-        let contenido = fs::read_to_string(Self::FILE_PATH)
-            .expect("No se pudo leer el archivo de configuración");
-        
-        toml::from_str(&contenido)
-            .expect("Formato TOML inválido")
-    }
-
-    // 3. Función para guardar los cambios en el disco
-    pub fn save(&self) {
-        let toml_string = toml::to_string_pretty(self)
-            .expect("No se pudo serializar a TOML");
-        fs::write(Self::FILE_PATH, toml_string)
-            .expect("No se pudo escribir el archivo en disco");
-    }
-
-    // 4. Función específica para modificar el Admin Mode
-    pub fn set_admin_mode(&mut self, mode: bool) {
-        self.admin_mode = mode;
-        self.save(); // Guarda automáticamente en el archivo cada vez que cambia
-    }
-}
-
-#[derive(RustEmbed)]
-#[folder = "assets/"]
-#[include = "*.json"]
-#[include = "*.conf"]
-//const CONF2: &str = include_str!("../assets/config2.json");
-struct Assets;
-
-
-pub fn search_json(archivo: &str, clave: &str) -> Vec<String> {
-    // 1. Uso de OR lógico ||
-    if clave.is_empty() || archivo.is_empty() {
-        return Vec::new(); 
-    }
-
-    // 2. Manejo elegante sin panics
-    let contenido = match Assets::get(archivo) {
-        Some(f) => String::from_utf8(f.data.to_vec()).unwrap_or_default(),
-        None => {
-            eprintln!("[ERROR] Asset '{}' no encontrado.", archivo);
-            return Vec::new();
-        }
-    };
- 
-    // 3. Manejo de JSON corrupto sin panics
-    let json: Value = match serde_json::from_str(&contenido) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("[ERROR] JSON corrupto en '{}': {}", archivo, e);
-            return Vec::new();
-        }
-    };
- 
-    // 4. Uso de .get() seguro: si no existe la clave, devuelve un vector vacío
-    match json.get(clave) {
-        Some(val) => tovec(val),
-        None => Vec::new(),
-    }
-}
- 
-fn tovec(valor: &Value) -> Vec<String> {
+pub fn tovec(valor: &Value) -> Vec<String> {
     match valor {
         Value::Array(arr) => arr
             .iter()
@@ -364,23 +165,8 @@ pub fn generate_vhost(sitio: &str, web_dir: &str, ver: &str) -> std::io::Result<
     Ok(())
 }
 
-pub fn valid_name(nombre: &str) -> bool {
-    // 1. Longitud
-    if nombre.is_empty() || nombre.len() > 64 {
-        return false;
-    }
-
-    // 2. No debe empezar con guion ni terminar con guion (mejor práctica)
-    if nombre.starts_with('-') || nombre.starts_with('_') || nombre.ends_with('-') || nombre.ends_with('_') {
-        return false;
-    }
-
-    // 3. Caracteres permitidos (quitamos el punto y coma final para que sea el resultado de la función)
-    nombre.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
 //Imprime una lista 
-pub fn list_version(list: &[String]) -> usize {
+pub fn list(list: &[String]) -> usize {
     if list.is_empty() {
         println!("{WARNING} No hay nada que enlistar o no tiene nada instalado.");
         line();
@@ -396,16 +182,7 @@ pub fn list_version(list: &[String]) -> usize {
     list.len() // Esta es la cantidad de elementos, se devuelve implícitamente
 }
 
-pub fn valid_input(input: &str, lista_len: usize) -> bool {
-    // Intentamos parsear y asignamos directamente el resultado a 'idx'
-    let idx: usize = match input.trim().parse() {
-        Ok(num) => num, // <- AQUÍ está la clave: devolvemos 'num' para asignarlo a 'idx'
-        Err(_) => {
-            println!("[X] Opción inválida.");
-            return false;
-        }
-    };
 
-    // Verificamos el rango
-    idx >= 1 && idx <= lista_len
-}
+
+
+ 

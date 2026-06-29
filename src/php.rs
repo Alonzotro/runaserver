@@ -1,7 +1,10 @@
 // ==========================================
 // PHP MANAGEMENT
 // ==========================================
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, Settings, WARNING, clear_screen, error_log, evaluate, findout_software, line, list_version, output, print_header, read_in, search_json, valid_input};
+use crate::public::*;
+use crate::data::*;
+use crate::checker::*;
+
 use crate::apache::{restart_apache};
 use crate::servicios::{update};
 use std::fs::{self, OpenOptions};
@@ -12,11 +15,9 @@ use std::collections::BTreeSet;
 
 //No visual
 /// Consulta en apt-cache los paquetes PHP disponibles en los repositorios
-use crate::data::{sort_versions, search_module, get_installable_php, get_installed_php_fpm, get_installed_php};
-
 pub fn versiones_instaladas_php() {
     let ver = get_installed_php();
-    list_version(&ver);
+    list(&ver);
 }
 
 pub fn install_php() {
@@ -33,11 +34,11 @@ pub fn install_php() {
 
     //Imprime el menu para decidir la version de PHP
     print_header("VERSIONES DE PHP DISPONIBLES");
-    list_version(&versiones);
+    list(&versiones);
     let len = versiones.len();
     let input = read_in(&format!("Selecciona una opción [1-{}]: ", len));
     
-    if valid_input(input, len) == false {
+    if valid_input(&input, len) == false {
         return;
     }
 

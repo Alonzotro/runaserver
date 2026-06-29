@@ -1,5 +1,5 @@
 use rust_i18n::t;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use local_ip_address::local_ip;
 
 mod php;
@@ -9,6 +9,7 @@ mod servicios;
 mod public;
 mod nginx;
 mod data;
+mod checker;
 
 use crate::php::*;
 use crate::apache::*;
@@ -17,7 +18,7 @@ use crate::servicios::*;
 use crate::public::*;
 use crate::nginx::*;
 use crate::data::*;
-
+use crate::checker::*;
 
 rust_i18n::i18n!("locales", fallback = "en");
 

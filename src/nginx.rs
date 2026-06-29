@@ -1,4 +1,6 @@
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, line, print_header, read_in, execute, output};
+use crate::public::*;
+use crate::data::*;
+use crate::checker::*;
 use crate::servicios::permisos;
 use crate::data::{get_installed_php};
 
@@ -8,7 +10,6 @@ use std::error::Error;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
-use regex::Regex;
 use ureq::http::status;
 
 

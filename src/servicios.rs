@@ -2,7 +2,9 @@
 // SERVICIOS PRINCIPALES
 // ==========================================
 use crate::{read_in};
-use crate::public::{ARROW, ERROR_PC, ERROR_YOU, INFO, LOG_ERRORES, OK, WARNING, clear_screen, error_log, evaluate, execute, findout_software, line, print_header, search_json};
+use crate::public::*;
+use crate::data::*;
+use crate::checker::*;
 use std::fs::{self, OpenOptions};
 use std::env;
 use std::future::Ready;

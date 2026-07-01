@@ -1777,6 +1777,7 @@ dependencies = [
  "terminal_size",
  "toml",
  "ureq",
+ "walkdir",
 ]
 
 [[package]]

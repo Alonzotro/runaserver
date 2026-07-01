@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 /// Consulta en apt-cache los paquetes PHP disponibles en los repositorios
 pub fn versiones_instaladas_php() {
     let ver = get_installed_php();
-    list(&ver);
+    list_vec(&ver);
 }
 
 pub fn install_php() {
@@ -34,7 +34,7 @@ pub fn install_php() {
 
     //Imprime el menu para decidir la version de PHP
     print_header("VERSIONES DE PHP DISPONIBLES");
-    list(&versiones);
+    list_vec(&versiones);
     let len = versiones.len();
     let input = read_in(&format!("Selecciona una opción [1-{}]: ", len));
     

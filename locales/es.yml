@@ -139,7 +139,7 @@ APACHE_RESTART_ERROR_TIP: "Hubo un problema al reiniciar Apache. Trate de usar: 
 
 PROMPT_SITE_NAME: "Nombre del sitio: "
 INVALID_SITE_NAME: "Nombre inválido."
-SITE_ALREADY_EXISTS: "Ya existe una configuración para '%{site}'."
+SITE_ALREADY_EXISTS: "Ya existe una configuración para ."
 NO_PHP_FPM_CONFIGS: "No se detectaron configuraciones de PHP-FPM instaladas."
 SELECT_PHP_VERSION_TITLE: "SELECCIONA LA VERSIÓN PHP-FPM"
 PROMPT_PHP_VERSION: "Versión a utilizar: "

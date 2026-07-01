@@ -3,7 +3,8 @@ use crate::apache::{restart_apache};
 use crate::servicios::{update};
 use std::ffi::OsStr;
 use std::process::{Command, Stdio, ExitStatus};
-use std::io::{self};
+use std::io::{self, Error};
+
 
 
 pub fn confirm<T>(result: io::Result<T>) -> bool {
@@ -20,7 +21,7 @@ pub fn confirm<T>(result: io::Result<T>) -> bool {
     }
 }
 
-pub fn evaluate(cmd: Result<ExitStatus> ) -> bool {
+pub fn evaluate(cmd: Result<ExitStatus, Error> ) -> bool {
     match cmd {
         Ok(status) if status.success() => {
             println!("{} {}", OK, rust_i18n::t!("RESULT_OK"));

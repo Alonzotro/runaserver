@@ -1,8 +1,10 @@
 use crate::public::*;
 use crate::checker::*;
 
+use std::io;
 use std::fs::{self};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 use std::process::{Command, Stdio};
 use std::collections::BTreeSet;
 use std::collections::HashSet;
@@ -33,18 +35,6 @@ pub fn sort_versions(pkg_list: impl IntoIterator<Item = impl AsRef<str>>) -> Vec
     versiones.into_iter().map(|(maj, min)| format!("{}.{}", maj, min)).collect()
 }
 
-fn get_dir(path: &str) -> io::Result<Vec<String>> {
-    match fs::read_dir(path) {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect(),
-            Err(e) => {
-                eprintln!("[FS WARN] No se pudo leer '{}': {}", path, e);
-                Vec::new()
-            }
-        }
-}
 
 #[derive(RustEmbed)]
 #[folder = "assets/"]
@@ -175,15 +165,56 @@ pub fn search_module(version: &str, modulo: &str) -> bool {
 
 
 //Apache
-fn get_apache_dir(subdir: &str) -> Vec<String> {
-    let path = format!("/etc/apache2/{}/", subdir);
-    get_dir(&path).unwrap_or_else(|e| {
-        println!("{} Error leyendo {}: {}", ERROR_PC, subdir, e);
-        Vec::new()
-    })
+pub fn get_files(dir: impl AsRef<Path>, extensions: &[&str]) -> io::Result<Vec<String>> {
+    // Normalizamos extensiones a minúsculas una sola vez
+    let clean_exts: Vec<String> = extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.').to_lowercase())
+        .collect();
+
+    fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| {
+            let path = e.path();
+            let ext = path.extension()?.to_str()?.to_lowercase();
+            
+            if clean_exts.contains(&ext) {
+                path.file_stem()?.to_str().map(|s| s.to_owned())
+            } else {
+                None
+            }
+        })
+        .collect::<Result<Vec<String>, _>>() // Ejemplo de recolección segura
+        .map(Ok)
+        .unwrap_or(Ok(vec![]))
 }
 
-pub fn get_available_sites_apache() -> Vec<String> { get_apache_dir("sites-available") }
-pub fn get_enabled_sites_apache()   -> Vec<String> { get_apache_dir("sites-enabled") }
+pub fn get_files_recur(dir: impl AsRef<Path>, extensions: &[&str]) -> Vec<String> {
+    let clean_exts: Vec<&str> = extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.'))
+        .collect();
+
+    WalkDir::new(dir)
+        .into_iter()
+        .filter_map(Result::ok) // Ignora errores de permisos
+        .filter(|e| e.file_type().is_file()) // Solo archivos
+        .filter_map(|e| {
+            let path = e.path();
+            
+            // Comparamos la extensión
+            let ext = path.extension().and_then(|ex| ex.to_str())?;
+            if clean_exts.contains(&ext) {
+                // Extraemos el "file_stem" (sitio1), lo pasamos a texto y luego a String
+                path.file_stem()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.to_owned())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
 
 

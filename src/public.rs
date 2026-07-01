@@ -166,7 +166,7 @@ pub fn generate_vhost(sitio: &str, web_dir: &str, ver: &str) -> std::io::Result<
 }
 
 //Imprime una lista 
-pub fn list(list: &[String]) -> usize {
+pub fn list_vec(list: &[String]) -> usize {
     if list.is_empty() {
         println!("{WARNING} No hay nada que enlistar o no tiene nada instalado.");
         line();

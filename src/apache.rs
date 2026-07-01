@@ -112,27 +112,27 @@ pub fn add_site(ip: &str) {
     // 1. Solicitar y validar nombre del sitio
     let sitio = read_in(&rust_i18n::t!("PROMPT_SITE_NAME"));
 
-
+    //verifica que el nombre sea valido
     if !valid_name(sitio.trim()) {
         println!("[X] {}", rust_i18n::t!("INVALID_SITE_NAME"));
         return;
     }
  
-
     // 2. Rutas y comprobación de duplicado
     let conf_file = format!("/etc/apache2/sites-available/{}.conf", sitio);
     let web_dir   = format!("/var/www/{}", sitio);
  
 
     if Path::new(&conf_file).exists() {
-        println!("[X] {}", rust_i18n::t!("SITE_ALREADY_EXISTS", site = sitio));
+        println!("{ERROR_YOU} {} {}", rust_i18n::t!("SITE_ALREADY_EXISTS"), sitio);
         return;
     }
 
     // 3. Seleccionar versión PHP-FPM disponible
+    clear_screen();
     print_header(&rust_i18n::t!("SELECT_PHP_VERSION_TITLE"));
     let listar = get_installed_php_fpm();
-    let mount = list(&listar);
+    let mount = list_vec(&listar);
 
     let sel  = read_in(&rust_i18n::t!("PROMPT_PHP_VERSION"));
     let ver_elegida: &str; 
@@ -584,7 +584,7 @@ pub fn editar_sitio_apache() {
     }
 
     let list = get_installed_php();
-    let mount = list(&list); // Tu función existente que lista las versiones de PHP en el sistema
+    let mount = list_vec(&list); // Tu función existente que lista las versiones de PHP en el sistema
 
     let nueva_ver = read_in(&rust_i18n::t!("PROMPT_NEW_PHP_VER"));
     if !nueva_ver.is_empty() {
